@@ -62,25 +62,31 @@ cross-platform API is designed and approved.
 
 ### Core API shape (see design doc for detail)
 
-- Single `ServiceManager.forThisPlatform()` (no scope-bound variants). Lifecycle ops take
-  just the service `id`; the manager resolves the domain (current-user first, then system).
-  `enable`/`disable` (boot persistence) are **separate** from `start`/`stop` (run now);
-  `installEnableStart(spec)` is the combined convenience. `install` is **upsert** (create or
-  update).
-- **Run-as identity is a builder field**, not a separate axis: `.asCurrentUser()` (default),
-  `.asUser(name)`, `.asSystemDaemon()` — each implies its management domain. Backed by a small
-  inspectable `RunAs` value type. (This replaced the earlier `Scope` + `runAsUser` redundancy.)
-- `ServiceSpec` (immutable builder) holds the **uniform core** (id, command, env, workdir,
-  identity, log paths, `autoStart`, `RestartPolicy` NEVER/ON_FAILURE/ALWAYS, nullable
-  `Schedule`). Nullable fields use `null`, never `Optional`. `toBuilder()` enables read→modify→
-  re-install.
+- Entry point `ServiceManager.getServiceManager()` (implicitly this platform; no scope-bound
+  variants). Lifecycle ops take just the service `id`; the manager auto-resolves scope (USER
+  first, then SYSTEM; `AmbiguousServiceException` if in both). Every by-id op also has an
+  explicit-`ManagementScope` overload. `enable`/`disable` (boot persistence) are **separate**
+  from `start`/`stop` (run now); `installEnableStart(spec)` is the combined convenience.
+  `install` is **upsert** (create or update).
+- **Two separate concepts** (don't conflate): **`RunAs`** = *who* runs it — a builder field,
+  `.asCurrentUser()` (default) / `.asUser(name)` / `.asSystemDaemon()`, backed by an
+  inspectable value type; and **`ManagementScope { USER, SYSTEM }`** = *where* it's
+  registered (the "domain", abstracted; same on all platforms, OpenRC = SYSTEM-only).
+  `RunAs` (3 values) derives `ManagementScope` (2 values). Replaced the earlier `Scope` +
+  `runAsUser` redundancy.
+- `ServiceSpec` (immutable builder, `builder()` with **no required arg**) holds the uniform
+  core (id, command, env, workdir, identity, log paths, `autoStart`, `RestartPolicy`
+  NEVER/ON_FAILURE/ALWAYS, nullable `Schedule`). **`id` and `displayName` are optional**: id
+  defaults to `com.u1.servicepal.<uuid>`, displayName defaults to id. Nullable fields use
+  `null`, never `Optional`. `toBuilder()` enables read→modify→re-install.
 - Platform-unique power lives in optional, typed, namespaced blocks: `.mac(...)`,
-  `.systemd(...)`, `.windows(...)`, `.openrc(...)` — applied on their platform, ignored
-  elsewhere, each with sensible per-platform defaults. Capability gaps throw
-  `UnsupportedFeatureException` at `install()`.
+  `.systemd(...)`, `.windows(...)`, `.openrc(...)`, each with sensible per-platform defaults.
+  A block for a **non-current** platform **throws** `WrongPlatformOptionsException` at
+  `install()` (not silently ignored). Capability gaps throw `UnsupportedFeatureException`.
 - Discovery/inspection: `list()` (all), `listManaged()` / `isManaged(id)` (only services we
   created, via an embedded marker), `read(id)` → `ServiceSpec` (null if absent), `readNative(id)`
-  → verbatim definition text.
+  → verbatim definition text. Destructive/overwrite ops on **unmanaged** services throw unless
+  called with the `allowUnmanaged = true` overload.
 - `Platform` enum: `MACOS_LAUNCHD | LINUX_SYSTEMD | LINUX_OPENRC | WINDOWS` (runtime-detected).
 
 ## Research docs (step 1 output — read these first)
@@ -145,7 +151,10 @@ No UI — API only. The library:
 ## Repo facts
 
 - Single Git repo, working branch: `claude/java-launchd-api-design-zkcty4`.
-- GitHub repo: `hooji/jlaunchdmanagerformacs`.
+- GitHub repo: `hooji/jlaunchdmanagerformacs` — **to be renamed `ServicePalForJava`** (later;
+  owner will do it). Repo/dir names keep the `JLaunchd…` form until then.
+- **Root Java package: `com.u1.servicepal`.** Generated service ids use this as the prefix
+  (`com.u1.servicepal.<uuid>`).
 - Started from an empty repository.
 
 ## Coding conventions (owner-mandated)

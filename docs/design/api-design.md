@@ -6,7 +6,8 @@
 >
 > **Decisions baked in** (owner-approved): pure-Java FFM service host on Windows (bundled,
 > runnable, the default path); **JDK 25** baseline; **systemd + OpenRC** both shipped in v1
-> as *separate platforms* (no public pluggable SPI); **fail-fast** on capability gaps.
+> as *separate platforms* (no public pluggable SPI); **fail-fast** on capability gaps;
+> **root package `com.u1.servicepal`** (project to be renamed *ServicePalForJava* later).
 >
 > **Code style** (owner-mandated, applies to every sketch below and all real code): `final`
 > by default; **no `var`**; **no `Optional`** (use `null`, document nullability; collections
@@ -22,8 +23,8 @@ out of the way, and Tier 3 loud and early.
 | Tier | What | How it's exposed |
 |---|---|---|
 | **1. Uniform core** (~90% of real use) | lifecycle verbs; `id`, `command`, env, working dir, **run-as identity**, log files, autostart, restart policy (`NEVER`/`ON_FAILURE`/`ALWAYS`), calendar/interval schedule, status core | the plain `ServiceManager` + `ServiceSpec` — identical on every platform |
-| **2. Platform-unique power** | the long tail of per-OS knobs (macOS `ProcessType`, systemd sandboxing/cgroups/ordering, Windows accounts/recovery, OpenRC supervisor) | optional, **typed, namespaced option blocks** (`.mac(...)`, `.systemd(...)`, `.windows(...)`, `.openrc(...)`) — applied on their platform, ignored elsewhere, each with sensible defaults |
-| **3. Capability gaps** | things a platform simply cannot do (calendar schedule on OpenRC; per-user identity on OpenRC; conditional keep-alive off systemd/macOS) | `Capabilities` query + **fail-fast** `UnsupportedFeatureException` at `install()` with an actionable message |
+| **2. Platform-unique power** | the long tail of per-OS knobs (macOS `ProcessType`, systemd sandboxing/cgroups/ordering, Windows accounts/recovery, OpenRC supervisor) | optional, **typed, namespaced option blocks** (`.mac(...)`, `.systemd(...)`, `.windows(...)`, `.openrc(...)`) — applied on their platform; a block for a **different** platform throws at `install()` (§6) |
+| **3. Capability gaps** | things a platform simply cannot do (calendar schedule on OpenRC; per-user scope on OpenRC; conditional keep-alive off systemd/macOS) | `Capabilities` query + **fail-fast** `UnsupportedFeatureException` at `install()` with an actionable message |
 
 So: **yes, the common path is uniform**; the platform-specific bits are neither hidden nor
 in your face — they sit in clearly-labelled side rooms you only enter on purpose.
@@ -31,9 +32,11 @@ in your face — they sit in clearly-labelled side rooms you only enter on purpo
 The simple path, identical on macOS, systemd, OpenRC, and Windows:
 
 ```java
-final ServiceManager mgr = ServiceManager.forThisPlatform();
+final ServiceManager mgr = ServiceManager.getServiceManager();
 
-final ServiceSpec backup = ServiceSpec.builder("com.example.backup")
+final ServiceSpec backup = ServiceSpec.builder()
+		.id("com.example.backup")            // optional; auto-generated if omitted (§4.1)
+		.displayName("Nightly Backup")       // optional; defaults to id()
 		.command("/usr/local/bin/backup", "--daily")
 		.asSystemDaemon()
 		.restart(RestartPolicy.ON_FAILURE)
@@ -41,10 +44,10 @@ final ServiceSpec backup = ServiceSpec.builder("com.example.backup")
 		.autoStart(true)
 		.build();
 
-mgr.install(backup);                 // render definition + register with the OS
-mgr.start("com.example.backup");     // run now
+mgr.install(backup);                          // render definition + register with the OS
+mgr.start("com.example.backup");             // run now
 final ServiceStatus st = mgr.status("com.example.backup");
-mgr.uninstall("com.example.backup"); // stop + deregister + delete definition
+mgr.uninstall("com.example.backup");         // stop + deregister + delete definition
 ```
 
 That block compiles to a launchd plist + `launchctl`, a systemd unit + `systemctl`, an OpenRC
@@ -53,31 +56,35 @@ change.
 
 ---
 
-## 2. Run-as identity (replaces the old `Scope`)
+## 2. Two concepts that are easy to conflate: identity vs. scope
 
-A service's **identity** answers "as whom, and in whose management domain, does this run?" —
-and on every platform the identity choice *implies* the domain, so they are one concept, set
-fluently on the builder with a sensible default. (This replaces the earlier `Scope` enum **and**
-the separate `runAsUser` field, which were redundant.)
+A service answers two *different* questions, and keeping them separate is what makes the model
+clean:
 
-Three cross-platform choices — these cover the core; you didn't miss any:
+| Question | Concept | Values | Where it's set |
+|---|---|---|---|
+| **As whom does the process run?** | `RunAs` (run-as identity) | current user · named user · root/system | a `ServiceSpec` builder field (§2.1) |
+| **Where is the service registered / who manages it?** | `ManagementScope` | `USER` · `SYSTEM` | derived from `RunAs`; also the explicit selector for by-id ops (§2.2) |
 
-| Builder call | Meaning | Management domain (implied) |
+They're related but **not 1:1**: `RunAs` has three values, `ManagementScope` has two
+(`asUser(name)` and `asSystemDaemon()` are different identities but both live in `SYSTEM`
+scope). That mismatch is exactly why they're separate types.
+
+### 2.1 `RunAs` — the run-as identity (builder field, default `asCurrentUser()`)
+
+| Builder call | Meaning | `ManagementScope` (derived) |
 |---|---|---|
-| `.asCurrentUser()` *(default)* | run as the user running the JVM | user-agent domain (no admin needed) |
-| `.asUser("www-data")` | system-registered, **drops to** that user | system domain (admin to install) |
-| `.asSystemDaemon()` | run as root / `LocalSystem` | system domain (admin to install) |
+| `.asCurrentUser()` *(default)* | run as the user running the JVM | `USER` |
+| `.asUser("www-data")` | system-registered, **drops to** that user | `SYSTEM` |
+| `.asSystemDaemon()` | run as root / `LocalSystem` | `SYSTEM` |
 
 Per-platform realization:
 
 | Identity | macOS | systemd | OpenRC | Windows |
 |---|---|---|---|---|
-| current user | agent in `~/Library/LaunchAgents`, `gui/<uid>` | `systemctl --user`, `~/.config/systemd/user/` | **unsupported → fail-fast** (no per-user services) | per-session / current-user context |
+| current user | agent in `~/Library/LaunchAgents`, `gui/<uid>` | `systemctl --user`, `~/.config/systemd/user/` | **unsupported → fail-fast** | per-session / current-user context |
 | named user | system daemon + `UserName=<name>` | system unit + `User=<name>` | `start-stop-daemon --user <name>` | service account `<name>` (+ secret via `.windows(...)`) |
 | system daemon | `/Library/LaunchDaemons`, root | system manager, `User=root` | system runlevel, root | `LocalSystem` |
-
-Backed by a small **inspectable** value type (used by `read()`/status and the renderers; you
-normally never touch it directly):
 
 ```java
 public final class RunAs {
@@ -88,98 +95,134 @@ public final class RunAs {
 	public static RunAs systemDaemon();
 
 	public Kind kind();
-	public String userName();   // null unless kind() == NAMED_USER
+	public String userName();            // null unless kind() == NAMED_USER
+	public ManagementScope scope();      // CURRENT_USER -> USER; otherwise SYSTEM
 }
 ```
 
-The builder exposes the fluent shortcuts (`.asCurrentUser()`, `.asUser(String)`,
-`.asSystemDaemon()`) plus a `.runAs(RunAs)` setter; they are mutually exclusive (last one
-wins). The getter `spec.runAs()` is **never null** (defaults to `RunAs.currentUser()`).
+The builder exposes `.asCurrentUser()`, `.asUser(String)`, `.asSystemDaemon()`, plus a
+`.runAs(RunAs)` setter (mutually exclusive; last one wins). `spec.runAs()` is **never null**.
+`asUser` takes a **name** (`String`) — the portable form; numeric uid, if ever needed, becomes
+a `.systemd(...)`/`.mac(...)` detail. Windows `LocalService`/`NetworkService` are lesser system
+accounts set via `.windows(...).account(...)`, not core.
 
-> **Notes.** `asUser` takes a **name** (`String`) — the portable form (`UserName=`/`User=`/
-> service account). A numeric uid is *nix-specific and, if ever needed, becomes a detail on
-> `.systemd(...)`/`.mac(...)`, not core. Windows `LocalService`/`NetworkService` are lesser
-> system accounts exposed via `.windows(...).account(...)`, not the cross-platform core.
+### 2.2 `ManagementScope` — where the service lives (the "domain", abstracted)
+
+This is the concept launchd calls a *domain* (`gui/<uid>` vs `system`). "Domain" is a poor
+cross-platform word (overloaded on Windows/AD/networking), so we abstract it to a two-valued
+enum that is **identical on all four platforms**:
+
+```java
+public enum ManagementScope { USER, SYSTEM }
+```
+
+| Platform | `USER` | `SYSTEM` |
+|---|---|---|
+| macOS | `gui/<uid>` agent | `system` daemon |
+| systemd | `--user` manager | system manager |
+| OpenRC | **unsupported → fail-fast** | system runlevels |
+| Windows | per-user service / session | machine-wide service |
+
+`ManagementScope` is **derived** from the spec's `RunAs` at install time (you don't set it on
+the spec). It surfaces as the **explicit selector** on by-id operations (§3) — for when you
+want to skip auto-resolution.
+
+> *Naming:* `ManagementScope` is a working name — open to `ServiceLevel` or `InstallScope` if
+> you prefer. Deliberately avoids bare "Scope" and "Domain".
 
 ---
 
 ## 3. The facade — `ServiceManager`
 
-One manager per process; **not** scope-bound (identity lives in the spec). Lifecycle calls
-take just the `id`; the manager **resolves the domain** for an `id` by looking in the
-current-user domain first, then the system domain (documented; see open question Q1).
+One manager per process, implicitly for **this** platform. Lifecycle calls take just the `id`;
+the manager **auto-resolves** the scope for an `id` by looking in `USER` first, then `SYSTEM`
+(throws `AmbiguousServiceException` if the same id exists in both — pass an explicit
+`ManagementScope` to disambiguate).
 
 ```java
 public interface ServiceManager {
 
-	// --- construction ---
-	static ServiceManager forThisPlatform();   // detect OS + init system
-	static ServiceManager forPlatform(final Platform platform);   // explicit (tests/cross-render)
+	// --- construction (implicitly THIS platform) ---
+	static ServiceManager getServiceManager();
+	static ServiceManager getServiceManager(final Platform platform);   // explicit: tests / cross-render
 
 	Platform platform();
-	Capabilities capabilities();               // feature queries (see §7)
+	Capabilities capabilities();                       // feature queries (§7)
 
-	// --- definition lifecycle ---
-	void install(final ServiceSpec spec);      // UPSERT: create or update + reconcile state
-	void uninstall(final String id);           // stop if running + deregister + delete definition
+	// --- definition lifecycle (install is UPSERT: create or update + reconcile) ---
+	void install(final ServiceSpec spec);              // throws if it would overwrite an UNMANAGED service
+	void install(final ServiceSpec spec, final boolean allowUnmanaged);
+	void uninstall(final String id);                   // throws if target is UNMANAGED (§5.1)
+	void uninstall(final String id, final boolean allowUnmanaged);
 	boolean isInstalled(final String id);
 
-	// --- discovery & inspection (see §5) ---
-	List<ServiceStatus> list();                // all services visible in reachable domains
-	List<ServiceStatus> listManaged();         // only services THIS library created (marker)
+	// --- discovery & inspection (§5) ---
+	List<ServiceStatus> list();                        // all services visible in reachable scopes
+	List<ServiceStatus> listManaged();                 // only services THIS library created
 	boolean isManaged(final String id);
-	ServiceSpec read(final String id);         // parsed spec, or null if not installed
-	String readNative(final String id);        // verbatim plist/unit/script text, or null
+	ServiceSpec read(final String id);                 // parsed spec, or null if not installed
+	String readNative(final String id);                // verbatim plist/unit/script text, or null
 
 	// --- the two orthogonal axes (kept separate; see §3.1) ---
-	void enable(final String id);              // start at boot/login (persistence)
+	void enable(final String id);                      // start at boot/login (persistence)
 	void disable(final String id);
-	void start(final String id);               // run now
+	void start(final String id);                       // run now
 	void stop(final String id);
 	void restart(final String id);
 
 	// --- convenience (the common "do it all" case) ---
-	void installEnableStart(final ServiceSpec spec);   // install + enable + start
+	void installEnableStart(final ServiceSpec spec);
 
 	// --- query ---
-	ServiceStatus status(final String id);     // never null; installed()==false if absent
+	ServiceStatus status(final String id);             // never null; installed()==false if absent
+
+	// --- explicit-scope variants ---
+	// Every by-id method above also has a sibling overload taking a trailing ManagementScope
+	// to skip auto-resolution. Shown here for two; the same pattern applies to all of them:
+	void start(final String id, final ManagementScope scope);
+	void uninstall(final String id, final ManagementScope scope, final boolean allowUnmanaged);
+	// …stop/restart/enable/disable/status/read/readNative/isInstalled/isManaged likewise.
 }
 ```
 
 Mutating ops **throw** on failure (`ServiceException` hierarchy, §8) — chosen over result
-objects for a clean call site; failures here are exceptional and usually unrecoverable
-(permission denied, malformed spec, native command failure).
+objects for a clean call site; failures here are exceptional and usually unrecoverable.
 
 ### 3.1 `enable`/`start` are separate; `install` is upsert
 `enable`/`disable` (boot persistence) and `start`/`stop` (run now) are **separate verbs** —
 the systemd-faithful model (resolves tension **T3**). `install` does *not* implicitly enable or
 start; `autoStart` in the spec is the value `enable` writes, and `installEnableStart` is the
-combined convenience launchd users expect. **`install` is upsert**: if the service already
-exists it rewrites the definition and reconciles registration; otherwise it creates it. Note
-that updating a *running* service does not restart the live process — call `restart(id)` to
-apply changes (§5.3).
+combined convenience launchd users expect. **`install` is upsert**: an existing *managed*
+service is rewritten and reconciled; otherwise it's created. Updating a *running* service does
+not restart the live process — call `restart(id)` to apply (§5.3).
+
+### 3.2 The managed-service guard
+`uninstall` (and an overwriting `install`) **throw `UnmanagedServiceException`** if the target
+service exists but lacks our managed-by marker (§5.1) — you can't accidentally delete or
+clobber a service the library didn't create. To proceed anyway, call the overload with
+`allowUnmanaged = true`. (Per owner request — a deliberately explicit opt-in; the parameter
+name could even be the blunt `yesDoThisToAServiceIDidNotMake` if we want the awkwardness to be
+the point.)
 
 ---
 
 ## 4. The domain model — `ServiceSpec`
 
 Immutable value object, `final` throughout, built with a builder, **no `Optional`** (absent =
-`null`; collections never null). Reverse-DNS `id` is the canonical handle, normalized to each
-platform's naming rules internally (kept verbatim where the platform allows — systemd unit
-names and Windows service names both tolerate dots).
+`null`; collections never null).
 
 ```java
 public final class ServiceSpec {
 	// ---- identity ----
-	String id();                       // required, e.g. "com.example.backup" (canonical handle)
-	String displayName();              // nullable (Windows DisplayName, systemd Description)
+	String id();                       // never null after build (generated if not supplied; §4.1)
+	String displayName();              // never null after build (defaults to id())
 	String description();              // nullable
 
 	// ---- what to run (uniform) ----
 	List<String> command();            // required, non-empty; program + args; program absolute
 	Path workingDirectory();           // nullable
 	Map<String,String> environment();  // never null; empty if none
-	RunAs runAs();                     // never null; default RunAs.currentUser()  (see §2)
+	RunAs runAs();                     // never null; default RunAs.currentUser()  (§2.1)
 
 	// ---- I/O (uniform) ----
 	Path stdout();                     // nullable (launchd StandardOutPath / systemd file:)
@@ -197,11 +240,24 @@ public final class ServiceSpec {
 	OpenRcOptions openrc();
 
 	Builder toBuilder();               // derive a builder from this spec (read→modify→install)
-	static Builder builder(final String id);
+	static Builder builder();
 }
 ```
 
-### 4.1 `RestartPolicy` (the keep-alive core)
+### 4.1 `id` and `displayName` (both optional)
+
+- **`id`** — the unique machine identifier, reverse-DNS in form (e.g. `com.example.backup`),
+  normalized to each platform's naming rules internally (kept verbatim where the platform
+  allows — systemd unit names and Windows service names both tolerate dots). It is the handle
+  every lifecycle call uses.
+- **`displayName`** — a free-form human string; stored as side-band info (Windows DisplayName,
+  systemd `Description`, a plist/script comment) and never used as a key.
+- Both are optional on the builder. Resolution at `build()`:
+  - `id` omitted → generate `com.u1.servicepal.<uuid>`.
+  - `displayName` omitted → default to `id()` (so a fully-defaulted spec gets a UUID id that is
+    also its display name).
+
+### 4.2 `RestartPolicy` (the keep-alive core)
 
 ```java
 public enum RestartPolicy { NEVER, ON_FAILURE, ALWAYS }
@@ -213,10 +269,9 @@ public enum RestartPolicy { NEVER, ON_FAILURE, ALWAYS }
 | `ON_FAILURE` | `KeepAlive={SuccessfulExit=false}` | `Restart=on-failure` | host respawns on non-zero exit | `supervise-daemon` |
 | `ALWAYS` | `KeepAlive=true` | `Restart=always` (+`StartLimitIntervalSec=0`) | host respawns always | `supervise-daemon` |
 
-Rich/conditional keep-alive (launchd `Crashed`/`NetworkState`/`PathState`; systemd
-`on-watchdog`/`on-abnormal`) lives in the option blocks (Tier 2).
+Rich/conditional keep-alive lives in the option blocks (Tier 2).
 
-### 4.2 `Schedule` (calendar + interval)
+### 4.3 `Schedule` (calendar + interval)
 
 A non-null `schedule` routes the job to the scheduling backend (systemd `.timer`, Windows Task
 Scheduler, launchd `StartCalendarInterval`). On OpenRC there is no native scheduler →
@@ -233,10 +288,10 @@ public sealed interface Schedule permits CalendarSchedule, IntervalSchedule {
 }
 ```
 
-A spec with **both** a `schedule` and `restart(ALWAYS)` is contradictory on every backend (a
-thing can't be both "fires on a schedule" and "always running") → fail-fast at build/validate.
+A spec with **both** a `schedule` and `restart(ALWAYS)` is contradictory on every backend →
+fail-fast at build/validate.
 
-### 4.3 `ServiceStatus` (small common core, honest about gaps)
+### 4.4 `ServiceStatus` (small common core, honest about gaps)
 
 ```java
 public final class ServiceStatus {
@@ -258,31 +313,28 @@ than fabricating — resolves tension **T6**.
 
 ## 5. Discovery, inspection, and modification
 
-These were the three gaps called out in review. All three are first-class.
-
 ### 5.1 Discovery — and telling "ours" apart from the rest
 Every definition we render carries a **managed-by marker**, so the library can distinguish
 services it created from pre-existing ones:
 
 | Platform | Marker |
 |---|---|
-| macOS | a custom plist key `com.jlaunchd.Managed` (= the lib version) |
-| systemd | `X-JLaunchd-Managed=1` in `[Unit]` (systemd ignores unknown `X-` keys) |
+| macOS | a custom plist key `com.u1.servicepal.Managed` (= the lib version) |
+| systemd | `X-ServicePal-Managed=1` in `[Unit]` (systemd ignores unknown `X-` keys) |
 | OpenRC | a sentinel comment + description var in the init script |
 | Windows | a tag in the sidecar JSON + a marker prefix in the service Description |
 
-- `list()` returns **all** services visible in reachable domains.
+- `list()` returns **all** services visible in reachable scopes.
 - `listManaged()` / `isManaged(id)` filter to the ones we created.
-- This also gives a safety hook: management ops can refuse (or warn) on services we didn't
-  create. Proposed default — `uninstall` operates on whatever `id` you name, but a
-  `requireManaged` mode is available for callers who want the guard. (Open question Q4.)
+- This backs the §3.2 guard: `uninstall`/overwrite refuse on unmanaged services unless
+  `allowUnmanaged = true`.
 
 ### 5.2 Inspection — load current settings
 - `read(id)` parses the live native definition back into a `ServiceSpec` (core fields +
-  recognized option-block keys), or returns **`null`** if not installed. It is best-effort:
-  exotic hand-authored keys we don't model are **not** silently dropped from view —
+  recognized option-block keys), or returns **`null`** if not installed. Best-effort:
+  unmodeled hand-authored keys are not silently presented as if absent —
 - `readNative(id)` returns the **verbatim** plist/unit/script text, so nothing is hidden even
-  when `read()` can't round-trip it. (Honest about lossiness — tension **T6**.)
+  when `read()` can't round-trip it (honest about lossiness — tension **T6**).
 
 ### 5.3 Modification — change and save
 Read → modify a copy (specs are immutable) → upsert → optionally restart:
@@ -299,44 +351,30 @@ if (current != null) {
 }
 ```
 
-`toBuilder()` makes the read→modify→install loop natural; `install` being upsert means there's
-no separate `update` verb to learn. Some platforms require the `restart` (or a re-`enable`) for
-changes to take effect; the backend documents which, and `install` performs any required
-`daemon-reload`/re-register itself.
+`toBuilder()` makes read→modify→install natural; `install` being upsert means there's no
+separate `update` verb. The backend performs any required `daemon-reload`/re-register itself.
 
 ---
 
-## 6. Platform option blocks (Tier 2 — typed escape hatches) and their defaults
+## 6. Platform option blocks (Tier 2) — defaults, and the wrong-platform rule
 
-Each block is an immutable builder, attached only when needed, **only consulted on its own
-platform**. When you omit it, the backend applies **sensible defaults** (below). Sketch:
+Each block is an immutable builder, attached only when needed. **A block targeting a platform
+other than the one you install on throws `WrongPlatformOptionsException` at `install()`** (per
+owner decision — silently ignoring it would hide a real mistake). So you build a spec for the
+platform you're targeting; to share a base spec, add the platform block conditionally with
+`toBuilder()` after checking `mgr.platform()`.
 
 ```java
-final ServiceSpec spec = ServiceSpec.builder("com.example.api")
+final ServiceSpec spec = ServiceSpec.builder()
+		.id("com.example.api")
 		.command("/usr/local/bin/api")
 		.restart(RestartPolicy.ALWAYS)
-		.mac(MacOptions.builder()
-				.processType(ProcessType.BACKGROUND)
-				.lowPriorityIO(true)
-				.keepAliveWhen(KeepAliveCondition.CRASHED)
-				.throttleInterval(Duration.ofSeconds(10))
-				.build())
 		.systemd(SystemdOptions.builder()
 				.type(SystemdType.NOTIFY)
 				.after("network-online.target").wants("network-online.target")
 				.memoryMax("512M").cpuQuota("50%").tasksMax(64)
 				.restartSec(Duration.ofSeconds(2))
 				.noNewPrivileges(true).protectSystem(ProtectSystem.STRICT)
-				.build())
-		.windows(WindowsOptions.builder()
-				.account(WindowsAccount.localService())     // or .user("DOMAIN\\svc", secret)
-				.startType(WindowsStartType.DELAYED_AUTO)
-				.dependsOn("Tcpip")
-				.build())
-		.openrc(OpenRcOptions.builder()
-				.supervisor(OpenRcSupervisor.SUPERVISE_DAEMON)
-				.need("net").after("firewall")
-				.runlevel("default")
 				.build())
 		.build();
 ```
@@ -361,12 +399,11 @@ a roadmap item.
 
 | Aspect | macOS | systemd | OpenRC | Windows |
 |---|---|---|---|---|
-| service "type"/mode | (launchd job) | **`Type=exec`** (detects bad binary/user; better than `simple`) | `supervise-daemon` if `restart != NEVER`, else `start-stop-daemon` | own-process service via the Java host |
+| service "type"/mode | (launchd job) | **`Type=exec`** (detects bad binary/user) | `supervise-daemon` if `restart != NEVER`, else `start-stop-daemon` | own-process service via the Java host |
 | `autoStart=true` | `RunAtLoad=true` | `enable` → `WantedBy=multi-user.target` (system) / `default.target` (user) | `rc-update add … default` | start type `auto` |
 | `autoStart=false` | `RunAtLoad=false` | not enabled | not added to a runlevel | start type `manual` |
-| stdout/stderr unset | launchd default | **journal** | OpenRC default logging | inherited by host (no redirect) |
+| stdout/stderr unset | launchd default | **journal** | OpenRC default logging | inherited by host |
 | restart throttle | launchd default | `RestartSec=100ms`; `ALWAYS` adds `StartLimitIntervalSec=0` | default respawn period | host backoff |
-| process priority | Background `ProcessType` | none | none | normal |
 | scheduled job | `StartCalendarInterval` | `.timer` + `oneshot .service` | **fail-fast** | Task Scheduler (no host) |
 
 ---
@@ -375,9 +412,9 @@ a roadmap item.
 
 ```java
 public interface Capabilities {
-	boolean userIdentity();          // false on OpenRC
-	boolean systemIdentity();
-	boolean namedUserIdentity();
+	boolean userScope();             // false on OpenRC
+	boolean systemScope();
+	boolean namedUser();
 	boolean calendarSchedule();      // false on OpenRC
 	boolean intervalSchedule();
 	boolean keepAlive();             // continuous restart
@@ -389,8 +426,7 @@ public interface Capabilities {
 
 `install()` validates `spec` against `capabilities()` **before** touching the system and throws
 `UnsupportedFeatureException` naming exactly what isn't supported and why. No silent
-degradation (your call). Opt-in fallbacks (e.g. calendar→cron on OpenRC) are a future roadmap
-item, never a default.
+degradation. Opt-in fallbacks (e.g. calendar→cron on OpenRC) are a future roadmap item.
 
 ---
 
@@ -399,6 +435,9 @@ item, never a default.
 ```java
 ServiceException                       // unchecked base — wraps everything
 ├── UnsupportedFeatureException        // capability gap (fail-fast, pre-flight)
+├── WrongPlatformOptionsException      // an option block for a non-current platform (§6)
+├── UnmanagedServiceException          // destructive/overwrite op on a service we didn't create (§3.2)
+├── AmbiguousServiceException          // by-id op and the id exists in both USER and SYSTEM scope
 ├── ServiceNotFoundException           // mutating op on an unknown id
 ├── PermissionException                // needs root/admin/elevation
 ├── DefinitionIOException              // writing/reading the plist/unit/script failed
@@ -413,15 +452,15 @@ ServiceException                       // unchecked base — wraps everything
 public enum Platform { MACOS_LAUNCHD, LINUX_SYSTEMD, LINUX_OPENRC, WINDOWS }
 ```
 
-`forThisPlatform()` detection order:
+`getServiceManager()` detection order:
 - **Windows / macOS:** by `os.name`.
 - **Linux:** systemd if `/run/systemd/system` exists (then `/proc/1/comm == systemd`); else
   OpenRC if `/sbin/openrc` / `rc-service` present; else **fail-fast** with a clear message
   (covers the init-less container case — "no supported init system found; PID 1 is `<x>`").
 
 systemd and OpenRC are **distinct platforms** with **distinct backends** (your decision — no
-shared Linux SPI). The internal `Backend` interface that each implements is code-org only, not
-a public extension point.
+shared Linux SPI). The internal `Backend` interface is code-org only, not a public extension
+point.
 
 ---
 
@@ -429,10 +468,10 @@ a public extension point.
 
 Resolves tension **T1** while honoring "no compiled binaries":
 
-- The jar contains a runnable class, e.g. `com.jlaunchd.windows.ServiceHost`.
+- The jar contains a runnable class, e.g. `com.u1.servicepal.windows.ServiceHost`.
 - `install()` of a **daemon** registers a service whose `binPath` is
-  `"<javaw>" -cp "<our.jar>" com.jlaunchd.windows.ServiceHost --id com.example.api`, and writes
-  the spec to a sidecar file (`%ProgramData%\jlaunchd\<id>.json`).
+  `"<javaw>" -cp "<our.jar>" com.u1.servicepal.windows.ServiceHost --id com.example.api`, and
+  writes the spec to a sidecar file (`%ProgramData%\servicepal\<id>.json`).
 - On start, the SCM launches that host; the host uses **FFM** to call
   `StartServiceCtrlDispatcher` + `RegisterServiceCtrlHandlerEx` (handler is an **FFM upcall**)
   + `SetServiceStatus`, then `CreateProcess`-supervises the real command, mapping STOP→terminate
@@ -450,11 +489,11 @@ so the Windows backend unit-tests on Linux/macOS with stubs.
 ## 11. Internal architecture (not public API)
 
 ```
-com.jlaunchd
-├── ServiceManager (iface) · Platform · Capabilities · ServiceException…            ← public
+com.u1.servicepal
+├── ServiceManager (iface) · Platform · ManagementScope · Capabilities · ServiceException…   ← public
 ├── model/   ServiceSpec(+Builder) · RunAs · RestartPolicy · Schedule(+CalendarSpec) · ServiceStatus
-│   └── options/  MacOptions · SystemdOptions · WindowsOptions · OpenRcOptions       ← public
-└── internal/                                                                        ← package-private
+│   └── options/  MacOptions · SystemdOptions · WindowsOptions · OpenRcOptions                 ← public
+└── internal/                                                                                  ← package-private
 	├── Backend (iface): install/uninstall/start/stop/enable/disable/status/list/read
 	├── exec/   CommandRunner (stubbable subprocess seam)
 	├── macos/    LaunchdBackend · PlistRenderer(dd-plist) · Launchctl
@@ -463,32 +502,31 @@ com.jlaunchd
 	└── windows/  WindowsBackend(routes svc⇄task) · Scm(FFM) · TaskScheduler · ServiceHost(FFM)
 ```
 
-- **Renderers** are per-platform (plist/INI/script/Task-XML) — there is no shared codec
-  (tension **T5**). `dd-plist` is confined to `macos/PlistRenderer`.
-- The `Backend` SPI is **internal**; we are not advertising a plugin point (your decision).
+- **Renderers** are per-platform (plist/INI/script/Task-XML) — no shared codec (tension **T5**).
+  `dd-plist` is confined to `macos/PlistRenderer`.
+- The `Backend` SPI is **internal**; not a public plugin point.
 - Everything native (subprocess *and* FFM) is behind an interface → full off-platform testing.
 
 ---
 
-## 12. Naming note
+## 12. Naming & packaging (settled)
 
-The artifact is universal now but the repo/brand is `JLaunchd…`. Proposed root package
-`com.jlaunchd` (keeps the brand; launchd remains the conceptual baseline). Open to a rename
-(`com.hooji.svc`, `com.jdaemon`, …) — low stakes, easy to settle.
+- **Root package:** `com.u1.servicepal`.
+- **Project rename:** GitHub repo to become *ServicePalForJava* (later; not yet). The current
+  repo/dirs keep the `JLaunchd…` name until then.
+- **`ManagementScope`** name still open to your preference (§2.2).
 
 ---
 
-## 13. Open questions for approval
+## 13. Open questions — status after this revision
 
-1. **Domain resolution for by-id ops.** With identity in the spec (no scope-bound manager), how
-   should `start("id")` locate a service present in multiple domains? Proposed: current-user
-   domain first, then system; throw `AmbiguousServiceException` if the same id exists in both.
-   OK?
-2. **`id` style:** require reverse-DNS, or accept any string and normalize? Proposed: *recommend*
-   reverse-DNS, *accept* any, normalize internally.
-3. **Option-block on a foreign platform:** silently ignore (proposed) vs warn vs fail-fast.
-4. **Managed-only guard:** should `uninstall`/modify refuse non-managed services by default, or
-   only when a `requireManaged` mode is set (proposed)?
-5. **Root package name** (§12).
-6. **Promote anything from Tier 2 into the core?** e.g. is process priority/`nice` common enough
-   to be a first-class `ServiceSpec` field rather than living in each option block?
+Resolved this round: run-as identity vs. scope split (§2); explicit-scope overloads + auto-
+resolution rule (§3); optional `id`/`displayName` with UUID generation (§4.1); throw on
+wrong-platform option blocks (§6); managed-service guard overload (§3.2); root package
+`com.u1.servicepal` (§12); no Tier-2 promotions (kept core as-is).
+
+Still want your nod on:
+- **A.** `ManagementScope` name (vs `ServiceLevel`/`InstallScope`).
+- **B.** Auto-resolution preferring `USER` then `SYSTEM`, with `AmbiguousServiceException` when
+  an id exists in both — good, or prefer always-explicit scope?
+- **C.** The `allowUnmanaged` parameter name (plain vs. the deliberately-blunt variant).
