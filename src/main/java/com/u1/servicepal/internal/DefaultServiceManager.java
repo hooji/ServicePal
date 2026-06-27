@@ -5,8 +5,13 @@ import com.u1.servicepal.Capabilities;
 import com.u1.servicepal.Installation;
 import com.u1.servicepal.Platform;
 import com.u1.servicepal.ServiceManager;
+import com.u1.servicepal.ServiceNotFoundException;
+import com.u1.servicepal.UnsupportedFeatureException;
+import com.u1.servicepal.WrongPlatformOptionsException;
 import com.u1.servicepal.internal.macos.LaunchdBackend;
+import com.u1.servicepal.model.CalendarSchedule;
 import com.u1.servicepal.model.Discovery;
+import com.u1.servicepal.model.IntervalSchedule;
 import com.u1.servicepal.model.ServiceSpec;
 import com.u1.servicepal.model.ServiceStatus;
 import java.util.ArrayList;
@@ -146,60 +151,100 @@ public final class DefaultServiceManager implements ServiceManager {
 		return found;
 	}
 
-	// --- mutation (step 4) ---
+	// --- mutation ---
 
 	@Override
 	public void install(final ServiceSpec spec) {
-		throw notYet("install");
+		install(spec, false);
 	}
 
 	@Override
 	public void install(final ServiceSpec spec, final boolean yesDoThisToAServiceIDidNotCreate) {
-		throw notYet("install");
+		validate(spec);
+		backend.install(spec, yesDoThisToAServiceIDidNotCreate);
 	}
 
 	@Override
 	public void uninstall(final String id) {
-		throw notYet("uninstall");
+		backend.uninstall(id, requireInstallation(id), false);
 	}
 
 	@Override
 	public void uninstall(final String id, final boolean yesDoThisToAServiceIDidNotCreate) {
-		throw notYet("uninstall");
+		backend.uninstall(id, requireInstallation(id), yesDoThisToAServiceIDidNotCreate);
 	}
 
 	@Override
 	public void enable(final String id) {
-		throw notYet("enable");
+		backend.enable(id, requireInstallation(id));
 	}
 
 	@Override
 	public void disable(final String id) {
-		throw notYet("disable");
+		backend.disable(id, requireInstallation(id));
 	}
 
 	@Override
 	public void start(final String id) {
-		throw notYet("start");
+		backend.start(id, requireInstallation(id));
 	}
 
 	@Override
 	public void stop(final String id) {
-		throw notYet("stop");
+		backend.stop(id, requireInstallation(id));
 	}
 
 	@Override
 	public void restart(final String id) {
-		throw notYet("restart");
+		backend.restart(id, requireInstallation(id));
 	}
 
 	@Override
 	public void installEnableStart(final ServiceSpec spec) {
-		throw notYet("installEnableStart");
+		validate(spec);
+		backend.install(spec, false);
+		final Installation installation = spec.runAs().installation();
+		backend.enable(spec.id(), installation);
+		backend.start(spec.id(), installation);
 	}
 
-	private static UnsupportedOperationException notYet(final String op) {
-		return new UnsupportedOperationException(
-				op + " is not implemented in this discovery-only build (arrives in step 4)");
+	private Installation requireInstallation(final String id) {
+		final Installation installation = resolve(id);
+		if (installation == null) {
+			throw new ServiceNotFoundException(id);
+		}
+		return installation;
+	}
+
+	/** Pre-flight: reject foreign option blocks and capability gaps before touching the OS. */
+	private void validate(final ServiceSpec spec) {
+		final Platform platform = backend.platform();
+		if (spec.mac() != null && platform != Platform.MACOS_LAUNCHD) {
+			throw new WrongPlatformOptionsException("mac", platform);
+		}
+		if (spec.systemd() != null && platform != Platform.LINUX_SYSTEMD) {
+			throw new WrongPlatformOptionsException("systemd", platform);
+		}
+		if (spec.windows() != null && platform != Platform.WINDOWS) {
+			throw new WrongPlatformOptionsException("windows", platform);
+		}
+		if (spec.openrc() != null && platform != Platform.LINUX_OPENRC) {
+			throw new WrongPlatformOptionsException("openrc", platform);
+		}
+
+		final Capabilities caps = backend.capabilities();
+		final Installation installation = spec.runAs().installation();
+		if (installation == Installation.PER_USER && !caps.perUserInstall()) {
+			throw new UnsupportedFeatureException("per-user installation", platform);
+		}
+		if (installation == Installation.SYSTEM_WIDE && !caps.systemWideInstall()) {
+			throw new UnsupportedFeatureException("system-wide installation", platform);
+		}
+		if (spec.schedule() instanceof CalendarSchedule && !caps.calendarSchedule()) {
+			throw new UnsupportedFeatureException("calendar schedule", platform);
+		}
+		if (spec.schedule() instanceof IntervalSchedule && !caps.intervalSchedule()) {
+			throw new UnsupportedFeatureException("interval schedule", platform);
+		}
 	}
 }

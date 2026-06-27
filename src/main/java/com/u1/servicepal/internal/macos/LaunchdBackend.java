@@ -4,7 +4,10 @@ import com.dd.plist.NSDictionary;
 import com.u1.servicepal.Capabilities;
 import com.u1.servicepal.DefinitionIOException;
 import com.u1.servicepal.Installation;
+import com.u1.servicepal.NativeCommandException;
 import com.u1.servicepal.Platform;
+import com.u1.servicepal.ServiceNotFoundException;
+import com.u1.servicepal.UnmanagedServiceException;
 import com.u1.servicepal.internal.Backend;
 import com.u1.servicepal.internal.exec.DefaultCommandRunner;
 import com.u1.servicepal.model.Discovery;
@@ -28,6 +31,7 @@ public final class LaunchdBackend implements Backend {
 	private final Launchctl launchctl;
 	private final List<LaunchdDir> directories;
 	private final PlistReader reader = new PlistReader();
+	private final PlistWriter writer = new PlistWriter();
 
 	public LaunchdBackend(final Launchctl launchctl, final List<LaunchdDir> directories) {
 		this.launchctl = launchctl;
@@ -123,6 +127,119 @@ public final class LaunchdBackend implements Backend {
 			return null;
 		}
 		return buildStatus(reader.parseFile(located.file()), located.file(), located.dir());
+	}
+
+	// --- mutation ---
+
+	@Override
+	public void install(final ServiceSpec spec, final boolean overwriteUnmanaged) {
+		final Installation installation = spec.runAs().installation();
+		final LaunchdDir target = writeTarget(installation);
+		final Path file = target.dir().resolve(spec.id() + ".plist");
+
+		if (Files.isRegularFile(file) && !overwriteUnmanaged) {
+			try {
+				if (!reader.isManaged(reader.parseFile(file))) {
+					throw new UnmanagedServiceException(spec.id());
+				}
+			} catch (final DefinitionIOException e) {
+				throw new UnmanagedServiceException(spec.id());
+			}
+		}
+
+		try {
+			Files.createDirectories(target.dir());
+			Files.writeString(file, writer.render(spec));
+		} catch (final IOException e) {
+			throw new DefinitionIOException("failed to write " + file, e);
+		}
+
+		// Upsert: if a previous instance is loaded, unload before (re)loading. Ignore the
+		// "not loaded" failure of the first bootout.
+		try {
+			launchctl.bootout(target.domain(), spec.id());
+		} catch (final NativeCommandException ignored) {
+			// not currently loaded — fine
+		}
+		launchctl.bootstrap(target.domain(), file);
+	}
+
+	@Override
+	public void uninstall(final String id, final Installation installation,
+			final boolean unmanagedOk) {
+		final Located located = find(id, installation);
+		if (located == null) {
+			throw new ServiceNotFoundException(id);
+		}
+		if (!unmanagedOk) {
+			try {
+				if (!reader.isManaged(reader.parseFile(located.file()))) {
+					throw new UnmanagedServiceException(id);
+				}
+			} catch (final DefinitionIOException e) {
+				throw new UnmanagedServiceException(id);
+			}
+		}
+		try {
+			launchctl.bootout(located.dir().domain(), id);
+		} catch (final NativeCommandException ignored) {
+			// not loaded — proceed to delete the definition anyway
+		}
+		try {
+			Files.deleteIfExists(located.file());
+		} catch (final IOException e) {
+			throw new DefinitionIOException("failed to delete " + located.file(), e);
+		}
+	}
+
+	@Override
+	public void enable(final String id, final Installation installation) {
+		final Located located = require(id, installation);
+		launchctl.enable(located.dir().domain(), id);
+	}
+
+	@Override
+	public void disable(final String id, final Installation installation) {
+		final Located located = require(id, installation);
+		launchctl.disable(located.dir().domain(), id);
+	}
+
+	@Override
+	public void start(final String id, final Installation installation) {
+		final Located located = require(id, installation);
+		launchctl.kickstart(located.dir().domain(), id, false);
+	}
+
+	@Override
+	public void stop(final String id, final Installation installation) {
+		final Located located = require(id, installation);
+		launchctl.killService(located.dir().domain(), id, "SIGTERM");
+	}
+
+	@Override
+	public void restart(final String id, final Installation installation) {
+		final Located located = require(id, installation);
+		launchctl.kickstart(located.dir().domain(), id, true);
+	}
+
+	private Located require(final String id, final Installation installation) {
+		final Located located = find(id, installation);
+		if (located == null) {
+			throw new ServiceNotFoundException(id);
+		}
+		return located;
+	}
+
+	/** The canonical directory we WRITE to for an installation: the first configured dir for
+	 * that installation (LaunchDaemons for SYSTEM_WIDE, the user's LaunchAgents for PER_USER). */
+	private LaunchdDir writeTarget(final Installation installation) {
+		for (final LaunchdDir dir : directories) {
+			if (dir.installation() == installation) {
+				return dir;
+			}
+		}
+		throw new com.u1.servicepal.UnsupportedFeatureException(
+				"installation " + installation, Platform.MACOS_LAUNCHD);
 	}
 
 	private ServiceStatus buildStatus(final NSDictionary dict, final Path file,

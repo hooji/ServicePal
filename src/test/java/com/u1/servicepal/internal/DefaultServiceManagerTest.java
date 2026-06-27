@@ -9,12 +9,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.u1.servicepal.AmbiguousServiceException;
 import com.u1.servicepal.Installation;
 import com.u1.servicepal.ServiceManager;
-import com.u1.servicepal.internal.macos.Launchctl;
+import com.u1.servicepal.ServiceNotFoundException;
+import com.u1.servicepal.WrongPlatformOptionsException;
 import com.u1.servicepal.internal.macos.LaunchdDir;
 import com.u1.servicepal.internal.macos.LaunchdDomain;
 import com.u1.servicepal.internal.macos.LaunchdBackend;
-import com.u1.servicepal.internal.macos.ServiceRuntime;
+import com.u1.servicepal.internal.macos.RecordingLaunchctl;
+import com.u1.servicepal.model.ServiceSpec;
 import com.u1.servicepal.model.ServiceStatus;
+import com.u1.servicepal.model.options.SystemdOptions;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -40,6 +43,7 @@ class DefaultServiceManagerTest {
 
 	private Path userDir;
 	private Path sysDir;
+	private RecordingLaunchctl launchctl;
 
 	@BeforeEach
 	void setUp(@TempDir final Path tmp) throws IOException {
@@ -48,7 +52,7 @@ class DefaultServiceManagerTest {
 	}
 
 	private ServiceManager manager() {
-		final Launchctl launchctl = (domain, label) -> ServiceRuntime.unknown();
+		launchctl = new RecordingLaunchctl();
 		final List<LaunchdDir> dirs = List.of(
 				new LaunchdDir(userDir, Installation.PER_USER, LaunchdDomain.GUI),
 				new LaunchdDir(sysDir, Installation.SYSTEM_WIDE, LaunchdDomain.SYSTEM));
@@ -96,8 +100,48 @@ class DefaultServiceManagerTest {
 	}
 
 	@Test
-	void mutationNotYetImplemented() {
+	void installThenResolveAndStart() {
 		final ServiceManager mgr = manager();
-		assertThrows(UnsupportedOperationException.class, () -> mgr.start("com.whatever"));
+		mgr.install(ServiceSpec.builder()
+				.id("com.u1.servicepal.test.svc")
+				.command("/bin/sleep", "60")
+				.asCurrentUser()
+				.build());
+
+		assertTrue(Files.isRegularFile(userDir.resolve("com.u1.servicepal.test.svc.plist")));
+		mgr.start("com.u1.servicepal.test.svc");   // by-id auto-resolves to PER_USER
+		assertTrue(launchctl.calls.contains("kickstart GUI com.u1.servicepal.test.svc"));
+	}
+
+	@Test
+	void installEnableStartDoesAllThree() {
+		final ServiceManager mgr = manager();
+		mgr.installEnableStart(ServiceSpec.builder()
+				.id("com.u1.servicepal.test.svc")
+				.command("/bin/sleep", "60")
+				.asCurrentUser()
+				.build());
+
+		final Path file = userDir.resolve("com.u1.servicepal.test.svc.plist");
+		assertTrue(launchctl.calls.contains("bootstrap GUI " + file));
+		assertTrue(launchctl.calls.contains("enable GUI com.u1.servicepal.test.svc"));
+		assertTrue(launchctl.calls.contains("kickstart GUI com.u1.servicepal.test.svc"));
+	}
+
+	@Test
+	void foreignPlatformOptionsRejected() {
+		final ServiceManager mgr = manager();   // macOS backend
+		final ServiceSpec spec = ServiceSpec.builder()
+				.command("/bin/true")
+				.systemd(SystemdOptions.builder().build())
+				.build();
+		assertThrows(WrongPlatformOptionsException.class, () -> mgr.install(spec));
+	}
+
+	@Test
+	void mutatingUnknownIdThrowsNotFound() {
+		final ServiceManager mgr = manager();
+		assertThrows(ServiceNotFoundException.class, () -> mgr.start("com.nope"));
+		assertThrows(ServiceNotFoundException.class, () -> mgr.uninstall("com.nope"));
 	}
 }

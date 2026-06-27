@@ -32,4 +32,22 @@ public interface Backend {
 
 	/** Status, or {@code null} if not installed in the given installation. */
 	ServiceStatus status(String id, Installation installation);
+
+	// --- mutation (installation is derived from the spec's RunAs for install) ---
+
+	/** Create or update (upsert). Throws if it would overwrite an unmanaged service unless
+	 * {@code overwriteUnmanaged}. */
+	void install(ServiceSpec spec, boolean overwriteUnmanaged);
+
+	void uninstall(String id, Installation installation, boolean unmanagedOk);
+
+	void enable(String id, Installation installation);
+
+	void disable(String id, Installation installation);
+
+	void start(String id, Installation installation);
+
+	void stop(String id, Installation installation);
+
+	void restart(String id, Installation installation);
 }

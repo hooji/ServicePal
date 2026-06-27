@@ -37,8 +37,8 @@ cross-platform API is designed and approved.
 2. ✅ **Design an overarching API** that works across all platforms — done & approved.
    See `docs/design/api-design.md`.
 3. ⏳ **Design clean interop with each platform's native facilities** — underway alongside step 4.
-4. ⏳ **Implement per-platform modules** (macOS → systemd → OpenRC → Windows) — **started**:
-   macOS discovery/inspection slice is implemented end-to-end (see below).
+4. ⏳ **Implement per-platform modules** (macOS → systemd → OpenRC → Windows) — **macOS
+   complete** (discovery + inspection + mutation, see below); systemd is next.
 5. ⬜ Assemble the unified library behind one facade.
 
 ## Implementation status (live)
@@ -47,16 +47,19 @@ cross-platform API is designed and approved.
   macOS/Linux paths are subprocess + file I/O, no FFM) — rises to **JDK 25** when the Windows
   FFM service host lands (see `pom.xml` comment). Matches the roadmap's lower-JDK Mac/Linux build.
 - **Done:** full public model (`ServiceSpec`/`RunAs`/`Schedule`/`ServiceStatus`/`Capabilities`/
-  exceptions), `ServiceManager` facade, platform detection, and the **macOS launchd
-  discovery/inspection backend** (`list`/`listManaged`/`read`/`readNative`/`status`/`isInstalled`/
-  `isManaged`, auto-resolution + ambiguity). Plist reading via `dd-plist` (confined to
-  `internal/macos/PlistReader`); live state via `launchctl list`. A discovery **CLI**
-  (`com.u1.servicepal.cli.DiscoverCli`, the shaded `target/servicepal.jar`). 19 unit tests,
-  all platform-independent (stubbed `CommandRunner`/`Launchctl`, temp-dir plists). GitHub Actions
+  exceptions), `ServiceManager` facade, platform detection, and the **complete macOS launchd
+  backend** — discovery/inspection (`list`/`listManaged`/`read`/`readNative`/`status`/
+  `isInstalled`/`isManaged`) **and mutation** (`install` upsert / `uninstall` / `start`/`stop`/
+  `restart` / `enable`/`disable` / `installEnableStart`). Plist read+write via `dd-plist`
+  (confined to `internal/macos/PlistReader`+`PlistWriter`); live state via domain-targeted
+  `launchctl print`; lifecycle via `launchctl bootstrap`/`bootout`/`kickstart`/`kill`/`enable`.
+  Two CLIs: **`DiscoverCli`** (read-only, the jar's main) and **`SelfTestCli`** (real
+  install→start→uninstall lifecycle, for the macOS probe). 34 unit tests, all
+  platform-independent (stubbed `CommandRunner`/`Launchctl`, temp-dir plists). GitHub Actions
   CI on ubuntu/macos/windows.
-- **Not yet:** all **mutation** (`install`/`uninstall`/`start`/`stop`/`enable`/`disable`) — throws
-  `UnsupportedOperationException`; the **systemd/OpenRC/Windows** backends (an `UnimplementedBackend`
-  reports platform + intended capabilities but throws on use).
+- **Not yet:** the **systemd/OpenRC/Windows** backends (an `UnimplementedBackend` reports
+  platform + intended capabilities but throws on use). macOS mutation is validated off-Mac by
+  unit tests and on a real Mac by the probe's `SelfTestCli` step.
 - **Refinements made during impl:**
   - `ServiceStatus` gained an `installation` field (handy for discovery grouping).
   - Discovery returns a **`Discovery(services, unreadable)`** — root-only/malformed plists are
@@ -69,6 +72,14 @@ cross-platform API is designed and approved.
   - Native access stays behind `CommandRunner`/`Launchctl` so everything unit-tests off-platform.
 - **Testing reach:** GitHub CI covers all three OSes for build+unit tests; full launchd behavior
   is best verified on a real Mac (owner runs macOS). The discovery CLI is the manual smoke test.
+- **Cross-platform probe** (`.github/workflows/probe.yml`, `workflow_dispatch` + dev-branch push):
+  builds and *runs* the CLI on ubuntu/macos/windows + an Alpine/OpenRC container, for exploratory
+  validation (not pass/fail tests). Findings so far: platform detection is correct on all four
+  (systemd / OpenRC / Windows / launchd); the macOS status parser is **validated** — a `sudo`
+  run on the macOS runner shows running daemons as `RUNNING` + real PID. Known honest limitation:
+  global **agents** (`/Library/LaunchAgents`) read as `UNKNOWN` under `sudo`, because root's
+  `gui/0` session can't see them (they live in the console user's `gui/<uid>`); a future refinement
+  can resolve the console user's uid for that case.
 
 ## Design docs (step 2)
 

@@ -1,8 +1,11 @@
 package com.u1.servicepal.internal.macos;
 
+import com.u1.servicepal.NativeCommandException;
 import com.u1.servicepal.internal.exec.CommandResult;
 import com.u1.servicepal.internal.exec.CommandRunner;
 import com.u1.servicepal.model.RunState;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -56,6 +59,64 @@ public final class DefaultLaunchctl implements Launchctl {
 			return new ServiceRuntime(RunState.STOPPED, null, null);
 		}
 		return ServiceRuntime.unknown();
+	}
+
+	@Override
+	public void bootstrap(final LaunchdDomain domain, final Path plist) {
+		mutate(List.of("launchctl", "bootstrap", domainTarget(domain), plist.toString()));
+	}
+
+	@Override
+	public void bootout(final LaunchdDomain domain, final String label) {
+		mutate(List.of("launchctl", "bootout", serviceTarget(domain, label)));
+	}
+
+	@Override
+	public void kickstart(final LaunchdDomain domain, final String label, final boolean restart) {
+		final List<String> cmd = new ArrayList<>(List.of("launchctl", "kickstart"));
+		if (restart) {
+			cmd.add("-k");
+		}
+		cmd.add(serviceTarget(domain, label));
+		mutate(cmd);
+	}
+
+	@Override
+	public void killService(final LaunchdDomain domain, final String label, final String signal) {
+		mutate(List.of("launchctl", "kill", signal, serviceTarget(domain, label)));
+	}
+
+	@Override
+	public void enable(final LaunchdDomain domain, final String label) {
+		mutate(List.of("launchctl", "enable", serviceTarget(domain, label)));
+	}
+
+	@Override
+	public void disable(final LaunchdDomain domain, final String label) {
+		mutate(List.of("launchctl", "disable", serviceTarget(domain, label)));
+	}
+
+	private void mutate(final List<String> command) {
+		final CommandResult res = runner.run(command);
+		if (!res.ok()) {
+			throw new NativeCommandException(command, res.exitCode(), res.stderr());
+		}
+	}
+
+	private String domainTarget(final LaunchdDomain domain) {
+		if (domain == LaunchdDomain.SYSTEM) {
+			return "system";
+		}
+		final String u = uid();
+		if (u == null) {
+			throw new com.u1.servicepal.ServiceException(
+					"cannot resolve uid for the gui domain");
+		}
+		return "gui/" + u;
+	}
+
+	private String serviceTarget(final LaunchdDomain domain, final String label) {
+		return domainTarget(domain) + "/" + label;
 	}
 
 	/** Parse the key lines of {@code launchctl print} output. Package-visible for testing. */

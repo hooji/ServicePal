@@ -1,0 +1,90 @@
+name: Probe (cross-platform manual run)
+
+# Not tests — these are exploratory probes that build the jar and RUN the discovery
+# CLI on each platform so we can see how the code behaves on real systems and iterate.
+# Triggered manually (workflow_dispatch); also runs on pushes to the active dev branch
+# so changes can be validated without waiting for a merge (remove that trigger later).
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/java-launchd-api-design-zkcty4]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: probe (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build jar
+        run: mvn -B -ntp -DskipTests package
+
+      - name: Probe — run as the normal user
+        shell: bash
+        run: java -jar target/servicepal.jar || true
+
+      # Real mutation lifecycle (install -> start -> inspect -> uninstall) of a throwaway
+      # PER_USER agent. macOS does the real work; other platforms print SKIP. Non-fatal so the
+      # probe stays informational — read the SELFTEST PASS/FAIL line in the log.
+      - name: Probe — mutation self-test
+        shell: bash
+        run: java -cp target/servicepal.jar com.u1.servicepal.cli.SelfTestCli || true
+
+      - name: Probe — run as root (macOS/Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: sudo "$(which java)" -jar target/servicepal.jar || true
+
+      - name: macOS — raw launchctl print format (ground truth)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # Dump to files first: piping a large stream into `head` closes the pipe early and,
+          # under the default `pipefail`, SIGPIPE would fail the step. Reading files is safe.
+          set +o pipefail
+          sudo launchctl print system >/tmp/sys.txt 2>/dev/null || true
+          echo "===== system domain (head) ====="
+          head -n 40 /tmp/sys.txt || true
+          LABEL=$(grep -oE 'com\.apple\.[a-zA-Z0-9._-]+' /tmp/sys.txt | head -n 1)
+          echo
+          echo "===== ${LABEL} (raw) ====="
+          sudo launchctl print "system/${LABEL}" >/tmp/svc.txt 2>/dev/null || true
+          head -n 40 /tmp/svc.txt || true
+
+  # The non-systemd Linux path: run our jar inside an Alpine+OpenRC container so platform
+  # detection hits LINUX_OPENRC. Best-effort — container quirks shouldn't fail the run.
+  probe-openrc:
+    name: probe (alpine/openrc)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build jar (on host)
+        run: mvn -B -ntp -DskipTests package
+
+      - name: Probe inside Alpine + OpenRC
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w alpine:latest sh -c '
+            apk add --no-cache openjdk21-jre openrc >/dev/null &&
+            echo "rc-service: $(command -v rc-service)" &&
+            java -jar target/servicepal.jar || true'

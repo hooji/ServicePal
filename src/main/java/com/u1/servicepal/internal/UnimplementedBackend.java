@@ -59,6 +59,42 @@ public final class UnimplementedBackend implements Backend {
 		throw notImplemented();
 	}
 
+	@Override
+	public void install(final ServiceSpec spec, final boolean overwriteUnmanaged) {
+		throw notImplemented();
+	}
+
+	@Override
+	public void uninstall(final String id, final Installation installation,
+			final boolean unmanagedOk) {
+		throw notImplemented();
+	}
+
+	@Override
+	public void enable(final String id, final Installation installation) {
+		throw notImplemented();
+	}
+
+	@Override
+	public void disable(final String id, final Installation installation) {
+		throw notImplemented();
+	}
+
+	@Override
+	public void start(final String id, final Installation installation) {
+		throw notImplemented();
+	}
+
+	@Override
+	public void stop(final String id, final Installation installation) {
+		throw notImplemented();
+	}
+
+	@Override
+	public void restart(final String id, final Installation installation) {
+		throw notImplemented();
+	}
+
 	private UnsupportedOperationException notImplemented() {
 		return new UnsupportedOperationException("the " + platform + " backend is not yet"
 				+ " implemented; discovery is currently implemented for macOS only");

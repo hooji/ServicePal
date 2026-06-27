@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.u1.servicepal.Installation;
@@ -55,6 +56,7 @@ class LaunchdBackendTest {
 
 	private Path userDir;
 	private Path sysDir;
+	private RecordingLaunchctl launchctl;
 	private LaunchdBackend backend;
 
 	@BeforeEach
@@ -66,13 +68,79 @@ class LaunchdBackendTest {
 		Files.writeString(sysDir.resolve("com.broken.bad.plist"), "this is not a plist");
 
 		// foo is running; everything else reports stopped.
-		final Launchctl launchctl = (domain, label) -> "com.example.foo".equals(label)
+		launchctl = new RecordingLaunchctl((domain, label) -> "com.example.foo".equals(label)
 				? new ServiceRuntime(RunState.RUNNING, 4242, 0)
-				: new ServiceRuntime(RunState.STOPPED, null, null);
+				: new ServiceRuntime(RunState.STOPPED, null, null));
 		final List<LaunchdDir> dirs = List.of(
 				new LaunchdDir(userDir, Installation.PER_USER, LaunchdDomain.GUI),
 				new LaunchdDir(sysDir, Installation.SYSTEM_WIDE, LaunchdDomain.SYSTEM));
 		backend = new LaunchdBackend(launchctl, dirs);
+	}
+
+	private static ServiceSpec sleepSpec() {
+		return ServiceSpec.builder()
+				.id("com.u1.servicepal.test.sleeper")
+				.command("/bin/sleep", "60")
+				.asCurrentUser()
+				.autoStart(true)
+				.build();
+	}
+
+	@Test
+	void installWritesManagedPlistAndBootstraps() throws IOException {
+		backend.install(sleepSpec(), false);
+
+		final Path file = userDir.resolve("com.u1.servicepal.test.sleeper.plist");
+		assertTrue(Files.isRegularFile(file));
+		assertTrue(Files.readString(file).contains("com.u1.servicepal.Managed"));
+		assertTrue(launchctl.calls.contains("bootstrap GUI " + file));
+
+		boolean found = false;
+		for (final ServiceStatus s : backend.discover(Installation.PER_USER).services()) {
+			if (s.id().equals("com.u1.servicepal.test.sleeper") && s.managed()) {
+				found = true;
+			}
+		}
+		assertTrue(found, "installed service should be discoverable and managed");
+	}
+
+	@Test
+	void uninstallBootsOutAndDeletes() {
+		backend.install(sleepSpec(), false);
+		backend.uninstall("com.u1.servicepal.test.sleeper", Installation.PER_USER, false);
+
+		final Path file = userDir.resolve("com.u1.servicepal.test.sleeper.plist");
+		assertFalse(Files.exists(file));
+		assertTrue(launchctl.calls.contains("bootout GUI com.u1.servicepal.test.sleeper"));
+	}
+
+	@Test
+	void installRefusesToOverwriteUnmanaged() throws IOException {
+		final Path file = userDir.resolve("com.u1.servicepal.test.sleeper.plist");
+		Files.writeString(file, UNMANAGED_BACKUP); // an unmanaged plist already at the target
+
+		assertThrows(com.u1.servicepal.UnmanagedServiceException.class,
+				() -> backend.install(sleepSpec(), false));
+		// ...unless explicitly allowed
+		backend.install(sleepSpec(), true);
+		assertTrue(Files.readString(file).contains("com.u1.servicepal.Managed"));
+	}
+
+	@Test
+	void lifecycleVerbsTargetTheRightDomain() {
+		backend.install(sleepSpec(), false);
+		final String id = "com.u1.servicepal.test.sleeper";
+		backend.start(id, Installation.PER_USER);
+		backend.restart(id, Installation.PER_USER);
+		backend.stop(id, Installation.PER_USER);
+		backend.enable(id, Installation.PER_USER);
+		backend.disable(id, Installation.PER_USER);
+
+		assertTrue(launchctl.calls.contains("kickstart GUI " + id));
+		assertTrue(launchctl.calls.contains("kickstart -k GUI " + id));
+		assertTrue(launchctl.calls.contains("kill SIGTERM GUI " + id));
+		assertTrue(launchctl.calls.contains("enable GUI " + id));
+		assertTrue(launchctl.calls.contains("disable GUI " + id));
 	}
 
 	@Test
