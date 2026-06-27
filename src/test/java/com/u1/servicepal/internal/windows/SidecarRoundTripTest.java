@@ -95,4 +95,25 @@ class SidecarRoundTripTest {
 		final Map<String, Object> foreign = reader.parse("{ \"id\": \"x\" }");
 		assertFalse(reader.isManaged(foreign));
 	}
+
+	@Test
+	void roundTripsLogPathsAndSpecialCharacterDescription() {
+		// A description with embedded quotes and a newline must survive the JSON round-trip, and the
+		// stdout/stderr log paths must come back intact (Path-vs-Path comparison is separator-safe
+		// on every CI OS).
+		final ServiceSpec spec = ServiceSpec.builder()
+				.id("com.example.api")
+				.command("C:\\app\\api.exe")
+				.asSystemDaemon()
+				.description("a \"quoted\" description\nwith a newline")
+				.stdout(Path.of("C:\\logs\\out.log"))
+				.stderr(Path.of("C:\\logs\\err.log"))
+				.build();
+
+		final ServiceSpec back = reader.toSpec(reader.parse(writer.render(spec, false)),
+				"com.example.api");
+		assertEquals("a \"quoted\" description\nwith a newline", back.description());
+		assertEquals(Path.of("C:\\logs\\out.log"), back.stdout());
+		assertEquals(Path.of("C:\\logs\\err.log"), back.stderr());
+	}
 }
