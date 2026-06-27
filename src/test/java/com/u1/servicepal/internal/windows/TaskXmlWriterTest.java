@@ -68,4 +68,22 @@ class TaskXmlWriterTest {
 		assertTrue(xml.contains("<UserId>svc-acme</UserId>"));
 		assertTrue(xml.contains("<LogonType>Password</LogonType>"));
 	}
+
+	@Test
+	void rendersMonthlyCalendarTrigger() {
+		final String xml = writer.render(base().schedule(Schedule.monthlyAt(15, 6, 30)).build());
+		assertTrue(xml.contains("<CalendarTrigger>"));
+		assertTrue(xml.contains("<ScheduleByMonth>"));
+		assertTrue(xml.contains("<Day>15</Day>"));
+		assertTrue(xml.contains("<StartBoundary>2020-01-01T06:30:00</StartBoundary>"));
+	}
+
+	@Test
+	void rendersCompoundIntervalDuration() {
+		// A period that spans hours and minutes must serialize to an ISO-8601 duration (PT1H30M),
+		// not "90 minutes" — Task Scheduler only accepts the ISO form.
+		final String xml = writer.render(base().schedule(Schedule.every(Duration.ofMinutes(90)))
+				.build());
+		assertTrue(xml.contains("<Interval>PT1H30M</Interval>"));
+	}
 }

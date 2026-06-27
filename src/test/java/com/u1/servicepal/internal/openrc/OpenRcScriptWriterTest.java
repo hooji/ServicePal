@@ -109,4 +109,38 @@ class OpenRcScriptWriterTest {
 		assertEquals(RunAs.namedUser("worker"), back.runAs());
 		assertEquals(Path.of("/srv/worker"), back.workingDirectory());
 	}
+
+	@Test
+	void rendersErrorLogForStderr() {
+		final ServiceSpec spec = ServiceSpec.builder()
+				.id("com.example.api")
+				.command("/usr/local/bin/api")
+				.asSystemDaemon()
+				// Separator-free filename so Path.toString() is identical on every CI OS (see the
+				// note in rendersSuperviseDaemonForAlways).
+				.stderr(Path.of("api.err"))
+				.build();
+
+		final String script = writer.render(spec, "default", "/run/com.example.api.pid");
+		assertTrue(script.contains("error_log=\"api.err\""));
+	}
+
+	@Test
+	void openRcSupervisorOptionOverridesTheRestartPolicyDefault() {
+		// RestartPolicy.NEVER would normally pick start-stop-daemon; an explicit supervisor option
+		// forces supervise-daemon anyway. Also confirms the chosen runlevel reaches the marker.
+		final ServiceSpec spec = ServiceSpec.builder()
+				.id("com.example.api")
+				.command("/usr/local/bin/api")
+				.asSystemDaemon()
+				.restart(RestartPolicy.NEVER)
+				.openrc(OpenRcOptions.builder()
+						.supervisor(OpenRcOptions.Supervisor.SUPERVISE_DAEMON).build())
+				.build();
+
+		final String script = writer.render(spec, "boot", "/run/com.example.api.pid");
+		assertTrue(script.contains("supervisor=supervise-daemon"));
+		assertFalse(script.contains("command_background"));
+		assertTrue(script.contains("# X-ServicePal-Runlevel: boot"));
+	}
 }

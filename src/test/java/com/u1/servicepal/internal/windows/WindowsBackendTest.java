@@ -2,6 +2,7 @@ package com.u1.servicepal.internal.windows;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -9,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.u1.servicepal.Installation;
 import com.u1.servicepal.UnmanagedServiceException;
 import com.u1.servicepal.UnsupportedFeatureException;
+import com.u1.servicepal.model.RunAs;
 import com.u1.servicepal.model.RunState;
 import com.u1.servicepal.model.Schedule;
 import com.u1.servicepal.model.ServiceSpec;
@@ -17,6 +19,7 @@ import com.u1.servicepal.model.options.WindowsOptions;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -155,6 +158,28 @@ class WindowsBackendTest {
 	void readUnknownReturnsNull() {
 		assertNull(backend.read("com.nope", Installation.SYSTEM_WIDE));
 		assertNull(backend.status("com.nope", Installation.SYSTEM_WIDE));
+	}
+
+	@Test
+	void readReconstructsInstalledDaemonFromSidecar() {
+		backend.install(daemon().toBuilder().asUser("svc-acme").build(), false);
+		final ServiceSpec back = backend.read(ID, Installation.SYSTEM_WIDE);
+		assertNotNull(back);
+		assertEquals(ID, back.id());
+		assertEquals(List.of("C:\\app\\api.exe", "--port", "8080"), back.command());
+		// The sidecar records the spec's run-as (the bare name), not the SCM-qualified account.
+		assertEquals(RunAs.namedUser("svc-acme"), back.runAs());
+		assertTrue(back.autoStart());
+	}
+
+	@Test
+	void readNativeReturnsSidecarJson() {
+		backend.install(daemon(), false);
+		final String raw = backend.readNative(ID, Installation.SYSTEM_WIDE);
+		assertNotNull(raw);
+		assertTrue(raw.contains(ID));
+		assertTrue(raw.contains(SidecarReader.MANAGED_VALUE));
+		assertNull(backend.readNative("com.nope", Installation.SYSTEM_WIDE));
 	}
 
 	@Test
