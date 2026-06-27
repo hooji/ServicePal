@@ -75,8 +75,10 @@ public final class SelfTestCli {
 			failures += check("readNative returns the definition", raw != null && raw.contains(ID));
 
 			final ServiceSpec back = mgr.read(ID);
+			// Compare against the command this platform actually installed (not a hardcoded one).
+			final String expectedExe = spec.command().get(0);
 			failures += check("read round-trips command",
-					back != null && back.command().contains("/bin/sleep"));
+					back != null && back.command().contains(expectedExe));
 		} catch (final Throwable t) {
 			System.out.println("SELFTEST ERROR: " + t);
 			t.printStackTrace(System.out);
