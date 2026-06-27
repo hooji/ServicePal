@@ -28,18 +28,26 @@ public final class SelfTestCli {
 			System.out.println("SELFTEST SKIP: could not initialize: " + e.getMessage());
 			return;
 		}
-		if (mgr.platform() != Platform.MACOS_LAUNCHD) {
-			System.out.println("SELFTEST SKIP: mutation is implemented for macOS only; this is "
-					+ mgr.platform());
-			return;
-		}
-
-		final ServiceSpec spec = ServiceSpec.builder()
+		final Platform platform = mgr.platform();
+		final boolean root = "root".equals(System.getProperty("user.name"));
+		final ServiceSpec.Builder builder = ServiceSpec.builder()
 				.id(ID)
 				.command("/bin/sleep", "120")
-				.asCurrentUser()
-				.autoStart(true)
-				.build();
+				.autoStart(true);
+		if (platform == Platform.MACOS_LAUNCHD) {
+			builder.asCurrentUser();   // a per-user launchd agent; no root needed
+		} else if (platform == Platform.LINUX_SYSTEMD) {
+			if (!root) {
+				System.out.println("SELFTEST SKIP: the systemd self-test installs a system-wide"
+						+ " unit and needs sudo (this is " + platform + ", non-root)");
+				return;
+			}
+			builder.asSystemDaemon();
+		} else {
+			System.out.println("SELFTEST SKIP: mutation not implemented for " + platform);
+			return;
+		}
+		final ServiceSpec spec = builder.build();
 
 		int failures = 0;
 		try {

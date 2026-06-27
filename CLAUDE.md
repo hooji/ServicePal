@@ -37,8 +37,8 @@ cross-platform API is designed and approved.
 2. ✅ **Design an overarching API** that works across all platforms — done & approved.
    See `docs/design/api-design.md`.
 3. ⏳ **Design clean interop with each platform's native facilities** — underway alongside step 4.
-4. ⏳ **Implement per-platform modules** (macOS → systemd → OpenRC → Windows) — **macOS
-   complete** (discovery + inspection + mutation, see below); systemd is next.
+4. ⏳ **Implement per-platform modules** (macOS → systemd → OpenRC → Windows) — **macOS and
+   Linux/systemd complete** (discovery + inspection + mutation, see below); OpenRC is next.
 5. ⬜ Assemble the unified library behind one facade.
 
 ## Implementation status (live)
@@ -54,12 +54,18 @@ cross-platform API is designed and approved.
   (confined to `internal/macos/PlistReader`+`PlistWriter`); live state via domain-targeted
   `launchctl print`; lifecycle via `launchctl bootstrap`/`bootout`/`kickstart`/`kill`/`enable`.
   Two CLIs: **`DiscoverCli`** (read-only, the jar's main) and **`SelfTestCli`** (real
-  install→start→uninstall lifecycle, for the macOS probe). 34 unit tests, all
-  platform-independent (stubbed `CommandRunner`/`Launchctl`, temp-dir plists). GitHub Actions
-  CI on ubuntu/macos/windows.
-- **Not yet:** the **systemd/OpenRC/Windows** backends (an `UnimplementedBackend` reports
-  platform + intended capabilities but throws on use). macOS mutation is validated off-Mac by
-  unit tests and on a real Mac by the probe's `SelfTestCli` step.
+  install→start→uninstall lifecycle, used by the probe; platform-aware identity).
+- **Done — Linux/systemd backend** (`internal/systemd`): writes `.service` units (INI, marker
+  `X-ServicePal-Managed`), drives `systemctl` (`daemon-reload`/`enable`/`disable`/`start`/
+  `stop`/`restart`, `show` for structured status). PER_USER → `systemctl --user` +
+  `~/.config/systemd/user`; SYSTEM_WIDE → system manager + `/etc/systemd/system`. Full
+  discovery + mutation. **Services only for now — `.timer` (calendar/interval) is deferred**,
+  so systemd reports `calendar`/`interval` capabilities as false (scheduled jobs fail fast).
+- **48 unit tests**, all platform-independent (stubbed `CommandRunner`/`Launchctl`/`Systemctl`,
+  temp-dir definitions). GitHub Actions CI on ubuntu/macos/windows; the probe runs a real
+  `systemctl` lifecycle (sudo) on the ubuntu runner and a real launchd lifecycle on macOS.
+- **Not yet:** the **OpenRC/Windows** backends (an `UnimplementedBackend` reports platform +
+  intended capabilities but throws on use); systemd `.timer` scheduling.
 - **Refinements made during impl:**
   - `ServiceStatus` gained an `installation` field (handy for discovery grouping).
   - Discovery returns a **`Discovery(services, unreadable)`** — root-only/malformed plists are

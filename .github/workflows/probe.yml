@@ -43,6 +43,13 @@ jobs:
         shell: bash
         run: java -cp target/servicepal.jar com.u1.servicepal.cli.SelfTestCli || true
 
+      # systemd installs a system-wide unit, which needs root — run the self-test under sudo
+      # on Linux (the ubuntu runner is systemd). macOS already covered by the non-sudo step.
+      - name: Probe — mutation self-test (root, systemd)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: sudo "$(which java)" -cp target/servicepal.jar com.u1.servicepal.cli.SelfTestCli || true
+
       - name: Probe — run as root (macOS/Linux)
         if: runner.os != 'Windows'
         shell: bash

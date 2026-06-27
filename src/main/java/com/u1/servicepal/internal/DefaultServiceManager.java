@@ -9,6 +9,7 @@ import com.u1.servicepal.ServiceNotFoundException;
 import com.u1.servicepal.UnsupportedFeatureException;
 import com.u1.servicepal.WrongPlatformOptionsException;
 import com.u1.servicepal.internal.macos.LaunchdBackend;
+import com.u1.servicepal.internal.systemd.SystemdBackend;
 import com.u1.servicepal.model.CalendarSchedule;
 import com.u1.servicepal.model.Discovery;
 import com.u1.servicepal.model.IntervalSchedule;
@@ -32,6 +33,9 @@ public final class DefaultServiceManager implements ServiceManager {
 	public static ServiceManager create(final Platform platform) {
 		if (platform == Platform.MACOS_LAUNCHD) {
 			return new DefaultServiceManager(LaunchdBackend.createDefault());
+		}
+		if (platform == Platform.LINUX_SYSTEMD) {
+			return new DefaultServiceManager(SystemdBackend.createDefault());
 		}
 		return new DefaultServiceManager(new UnimplementedBackend(platform));
 	}
