@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   build:
-    name: build (${{ matrix.os }})
+    name: build+test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -91,7 +91,7 @@ jobs:
   # container so platform detection hits LINUX_OPENRC. GATING — the script runs the discovery
   # CLI and the self-test, and any non-zero exit fails the docker run (and therefore the job).
   openrc:
-    name: build (alpine/openrc)
+    name: build+test (alpine/openrc)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -103,9 +103,10 @@ jobs:
           java-version: "25"
           cache: maven
 
-      # The unit tests already ran in the matrix above; here we only need the runnable jar.
-      - name: Build jar (on host)
-        run: mvn -B -ntp -DskipTests package
+      # Run the full unit suite here too (CI is cheap), and build the runnable jar that the
+      # Alpine container exercises below.
+      - name: Build and test (on host)
+        run: mvn -B -ntp verify
 
       - name: Real OpenRC lifecycle inside Alpine
         run: |
