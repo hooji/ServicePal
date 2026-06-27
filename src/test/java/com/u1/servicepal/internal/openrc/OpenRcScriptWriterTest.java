@@ -27,7 +27,10 @@ class OpenRcScriptWriterTest {
 				.asUser("www-data")
 				.restart(RestartPolicy.ALWAYS)
 				.env("LOG", "info")
-				.stdout(Path.of("/var/log/api.log"))
+				// A separator-free filename so Path.toString() is identical on every OS (an
+				// absolute path would flip to backslashes on a Windows CI runner, which quote()
+				// then escapes — a test artifact; a real OpenRC host always uses forward slashes).
+				.stdout(Path.of("api.log"))
 				.build();
 
 		final String script = writer.render(spec, "default", "/run/com.example.api.pid");
@@ -42,9 +45,7 @@ class OpenRcScriptWriterTest {
 		assertTrue(script.contains("supervisor=supervise-daemon"));
 		assertTrue(script.contains("respawn_max=0"));
 		assertTrue(script.contains("export LOG=\"info\""));
-		// Derive the expected path string from the same Path so the assertion is OS-independent
-		// (Path.of("/var/log/api.log").toString() uses backslashes on a Windows CI runner).
-		assertTrue(script.contains("output_log=\"" + Path.of("/var/log/api.log") + "\""));
+		assertTrue(script.contains("output_log=\"api.log\""));
 		assertTrue(script.contains("pidfile=\"/run/com.example.api.pid\""));
 		// supervise-daemon manages foregrounding itself — no command_background.
 		assertFalse(script.contains("command_background"));
