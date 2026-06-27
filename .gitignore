@@ -1,0 +1,14 @@
+target/
+*.class
+*.log
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# Maven shade plugin artifact
+dependency-reduced-pom.xml

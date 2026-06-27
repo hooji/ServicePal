@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<groupId>com.u1.servicepal</groupId>
+	<artifactId>servicepal</artifactId>
+	<!-- CI-friendly version: release builds override with -Drevision=<tag-without-v>. -->
+	<version>${revision}</version>
+	<packaging>jar</packaging>
+
+	<name>ServicePalForJava</name>
+	<description>A clean, immutable-first Java API for creating and managing OS-level
+		background services/daemons across macOS, Linux, and Windows.</description>
+
+	<properties>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<!-- Default version for local/dev builds; release.yml overrides via -Drevision. -->
+		<revision>0.1.0-SNAPSHOT</revision>
+		<!--
+			Baseline is JDK 25 LTS once the Windows FFM service host (step 4) lands — FFM is
+			final in JDK 22 and 25 is the first LTS with it final. The current modules (macOS
+			launchd, systemd, OpenRC discovery) are pure subprocess + file I/O with no FFM, so
+			they compile and run on JDK 21. This also matches the roadmap's lower-JDK
+			Mac/Linux-only build. Bump this to 25 when the windows/ FFM code is added.
+		-->
+		<maven.compiler.release>21</maven.compiler.release>
+		<junit.version>5.10.2</junit.version>
+	</properties>
+
+	<dependencies>
+		<!-- macOS plist codec (confined to internal/macos). XML + binary + ASCII plists. -->
+		<dependency>
+			<groupId>com.googlecode.plist</groupId>
+			<artifactId>dd-plist</artifactId>
+			<version>1.28</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.junit.jupiter</groupId>
+			<artifactId>junit-jupiter</artifactId>
+			<version>${junit.version}</version>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<finalName>servicepal</finalName>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<version>3.13.0</version>
+			</plugin>
+
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<version>3.2.5</version>
+			</plugin>
+
+			<!-- Sources jar (servicepal-<version>-sources.jar) for IDE attachment / releases. -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-source-plugin</artifactId>
+				<version>3.3.1</version>
+				<executions>
+					<execution>
+						<id>attach-sources</id>
+						<phase>package</phase>
+						<goals>
+							<goal>jar-no-fork</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+
+			<!-- Build a runnable uber-jar (includes dd-plist) for the discovery CLI. -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-shade-plugin</artifactId>
+				<version>3.5.3</version>
+				<executions>
+					<execution>
+						<phase>package</phase>
+						<goals>
+							<goal>shade</goal>
+						</goals>
+						<configuration>
+							<createDependencyReducedPom>false</createDependencyReducedPom>
+							<transformers>
+								<transformer
+										implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+									<mainClass>com.u1.servicepal.cli.DiscoverCli</mainClass>
+								</transformer>
+							</transformers>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+</project>
