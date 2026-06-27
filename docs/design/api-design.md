@@ -56,7 +56,7 @@ change.
 
 ---
 
-## 2. Two concepts that are easy to conflate: identity vs. scope
+## 2. Two concepts that are easy to conflate: identity vs. installation
 
 A service answers two *different* questions, and keeping them separate is what makes the model
 clean:
@@ -64,19 +64,19 @@ clean:
 | Question | Concept | Values | Where it's set |
 |---|---|---|---|
 | **As whom does the process run?** | `RunAs` (run-as identity) | current user · named user · root/system | a `ServiceSpec` builder field (§2.1) |
-| **Where is the service registered / who manages it?** | `ManagementScope` | `USER` · `SYSTEM` | derived from `RunAs`; also the explicit selector for by-id ops (§2.2) |
+| **Is it set up for one user, or the whole computer?** | `Installation` | `PER_USER` · `SYSTEM_WIDE` | derived from `RunAs`; also the explicit selector for by-id ops (§2.2) |
 
-They're related but **not 1:1**: `RunAs` has three values, `ManagementScope` has two
-(`asUser(name)` and `asSystemDaemon()` are different identities but both live in `SYSTEM`
-scope). That mismatch is exactly why they're separate types.
+They're related but **not 1:1**: `RunAs` has three values, `Installation` has two
+(`asUser(name)` and `asSystemDaemon()` are different identities but both are `SYSTEM_WIDE`
+installations). That mismatch is exactly why they're separate types.
 
 ### 2.1 `RunAs` — the run-as identity (builder field, default `asCurrentUser()`)
 
-| Builder call | Meaning | `ManagementScope` (derived) |
+| Builder call | Meaning | `Installation` (derived) |
 |---|---|---|
-| `.asCurrentUser()` *(default)* | run as the user running the JVM | `USER` |
-| `.asUser("www-data")` | system-registered, **drops to** that user | `SYSTEM` |
-| `.asSystemDaemon()` | run as root / `LocalSystem` | `SYSTEM` |
+| `.asCurrentUser()` *(default)* | run as the user running the JVM | `PER_USER` |
+| `.asUser("www-data")` | system-registered, **drops to** that user | `SYSTEM_WIDE` |
+| `.asSystemDaemon()` | run as root / `LocalSystem` | `SYSTEM_WIDE` |
 
 Per-platform realization:
 
@@ -96,7 +96,7 @@ public final class RunAs {
 
 	public Kind kind();
 	public String userName();            // null unless kind() == NAMED_USER
-	public ManagementScope scope();      // CURRENT_USER -> USER; otherwise SYSTEM
+	public Installation installation();  // CURRENT_USER -> PER_USER; otherwise SYSTEM_WIDE
 }
 ```
 
@@ -106,38 +106,44 @@ The builder exposes `.asCurrentUser()`, `.asUser(String)`, `.asSystemDaemon()`, 
 a `.systemd(...)`/`.mac(...)` detail. Windows `LocalService`/`NetworkService` are lesser system
 accounts set via `.windows(...).account(...)`, not core.
 
-### 2.2 `ManagementScope` — where the service lives (the "domain", abstracted)
+### 2.2 `Installation` — is the service set up for one user, or the whole computer?
 
-This is the concept launchd calls a *domain* (`gui/<uid>` vs `system`). "Domain" is a poor
-cross-platform word (overloaded on Windows/AD/networking), so we abstract it to a two-valued
-enum that is **identical on all four platforms**:
+Plain English: every service is installed **either just for one user account, or for the whole
+computer** — the same choice a software installer gives you ("Install for all users, or just
+me?"). This is the concept launchd calls a *domain* (`gui/<uid>` vs `system`); "domain" is a
+poor cross-platform word (overloaded on Windows/AD/networking), so we name it after what it
+actually decides. It's a two-valued enum, **identical on all four platforms**:
 
 ```java
-public enum ManagementScope { USER, SYSTEM }
+public enum Installation { PER_USER, SYSTEM_WIDE }
 ```
 
-| Platform | `USER` | `SYSTEM` |
+| Value | What it means | Admin needed? | Runs when |
+|---|---|---|---|
+| `PER_USER` | belongs to **one user account**; lives in that user's personal space | **no** | that user is logged in (or via lingering) |
+| `SYSTEM_WIDE` | belongs to the **whole machine**; lives in system locations | **yes** (root/admin) | from **boot**, independent of any login |
+
+Per-platform realization:
+
+| Platform | `PER_USER` | `SYSTEM_WIDE` |
 |---|---|---|
 | macOS | `gui/<uid>` agent | `system` daemon |
 | systemd | `--user` manager | system manager |
 | OpenRC | **unsupported → fail-fast** | system runlevels |
 | Windows | per-user service / session | machine-wide service |
 
-`ManagementScope` is **derived** from the spec's `RunAs` at install time (you don't set it on
-the spec). It surfaces as the **explicit selector** on by-id operations (§3) — for when you
-want to skip auto-resolution.
-
-> *Naming:* `ManagementScope` is a working name — open to `ServiceLevel` or `InstallScope` if
-> you prefer. Deliberately avoids bare "Scope" and "Domain".
+`Installation` is **derived** from the spec's `RunAs` at install time (you don't set it on the
+spec). It surfaces as the **explicit selector** on by-id operations (§3) — for when you want to
+skip auto-resolution.
 
 ---
 
 ## 3. The facade — `ServiceManager`
 
 One manager per process, implicitly for **this** platform. Lifecycle calls take just the `id`;
-the manager **auto-resolves** the scope for an `id` by looking in `USER` first, then `SYSTEM`
-(throws `AmbiguousServiceException` if the same id exists in both — pass an explicit
-`ManagementScope` to disambiguate).
+the manager **auto-resolves** the installation for an `id` by looking at the `PER_USER`
+installation first, then `SYSTEM_WIDE` (throws `AmbiguousServiceException` if the same id
+exists in both — pass an explicit `Installation` to disambiguate).
 
 ```java
 public interface ServiceManager {
@@ -151,13 +157,13 @@ public interface ServiceManager {
 
 	// --- definition lifecycle (install is UPSERT: create or update + reconcile) ---
 	void install(final ServiceSpec spec);              // throws if it would overwrite an UNMANAGED service
-	void install(final ServiceSpec spec, final boolean allowUnmanaged);
+	void install(final ServiceSpec spec, final boolean yesDoThisToAServiceIDidNotCreate);
 	void uninstall(final String id);                   // throws if target is UNMANAGED (§5.1)
-	void uninstall(final String id, final boolean allowUnmanaged);
+	void uninstall(final String id, final boolean yesDoThisToAServiceIDidNotCreate);
 	boolean isInstalled(final String id);
 
 	// --- discovery & inspection (§5) ---
-	List<ServiceStatus> list();                        // all services visible in reachable scopes
+	List<ServiceStatus> list();                        // all services visible in reachable installations
 	List<ServiceStatus> listManaged();                 // only services THIS library created
 	boolean isManaged(final String id);
 	ServiceSpec read(final String id);                 // parsed spec, or null if not installed
@@ -176,11 +182,12 @@ public interface ServiceManager {
 	// --- query ---
 	ServiceStatus status(final String id);             // never null; installed()==false if absent
 
-	// --- explicit-scope variants ---
-	// Every by-id method above also has a sibling overload taking a trailing ManagementScope
+	// --- explicit-installation variants ---
+	// Every by-id method above also has a sibling overload taking a trailing Installation
 	// to skip auto-resolution. Shown here for two; the same pattern applies to all of them:
-	void start(final String id, final ManagementScope scope);
-	void uninstall(final String id, final ManagementScope scope, final boolean allowUnmanaged);
+	void start(final String id, final Installation installation);
+	void uninstall(final String id, final Installation installation,
+			final boolean yesDoThisToAServiceIDidNotCreate);
 	// …stop/restart/enable/disable/status/read/readNative/isInstalled/isManaged likewise.
 }
 ```
@@ -199,10 +206,9 @@ not restart the live process — call `restart(id)` to apply (§5.3).
 ### 3.2 The managed-service guard
 `uninstall` (and an overwriting `install`) **throw `UnmanagedServiceException`** if the target
 service exists but lacks our managed-by marker (§5.1) — you can't accidentally delete or
-clobber a service the library didn't create. To proceed anyway, call the overload with
-`allowUnmanaged = true`. (Per owner request — a deliberately explicit opt-in; the parameter
-name could even be the blunt `yesDoThisToAServiceIDidNotMake` if we want the awkwardness to be
-the point.)
+clobber a service the library didn't create. To proceed anyway, call the overload passing
+`yesDoThisToAServiceIDidNotCreate = true`. The parameter name is deliberately blunt and
+awkward — that awkwardness *is* the speed bump you pay to touch a service you didn't make.
 
 ---
 
@@ -324,10 +330,10 @@ services it created from pre-existing ones:
 | OpenRC | a sentinel comment + description var in the init script |
 | Windows | a tag in the sidecar JSON + a marker prefix in the service Description |
 
-- `list()` returns **all** services visible in reachable scopes.
+- `list()` returns **all** services visible in reachable installations.
 - `listManaged()` / `isManaged(id)` filter to the ones we created.
 - This backs the §3.2 guard: `uninstall`/overwrite refuse on unmanaged services unless
-  `allowUnmanaged = true`.
+  `yesDoThisToAServiceIDidNotCreate = true`.
 
 ### 5.2 Inspection — load current settings
 - `read(id)` parses the live native definition back into a `ServiceSpec` (core fields +
@@ -412,8 +418,8 @@ a roadmap item.
 
 ```java
 public interface Capabilities {
-	boolean userScope();             // false on OpenRC
-	boolean systemScope();
+	boolean perUserInstall();        // false on OpenRC
+	boolean systemWideInstall();
 	boolean namedUser();
 	boolean calendarSchedule();      // false on OpenRC
 	boolean intervalSchedule();
@@ -437,7 +443,7 @@ ServiceException                       // unchecked base — wraps everything
 ├── UnsupportedFeatureException        // capability gap (fail-fast, pre-flight)
 ├── WrongPlatformOptionsException      // an option block for a non-current platform (§6)
 ├── UnmanagedServiceException          // destructive/overwrite op on a service we didn't create (§3.2)
-├── AmbiguousServiceException          // by-id op and the id exists in both USER and SYSTEM scope
+├── AmbiguousServiceException          // by-id op and the id exists as both PER_USER and SYSTEM_WIDE
 ├── ServiceNotFoundException           // mutating op on an unknown id
 ├── PermissionException                // needs root/admin/elevation
 ├── DefinitionIOException              // writing/reading the plist/unit/script failed
@@ -490,7 +496,7 @@ so the Windows backend unit-tests on Linux/macOS with stubs.
 
 ```
 com.u1.servicepal
-├── ServiceManager (iface) · Platform · ManagementScope · Capabilities · ServiceException…   ← public
+├── ServiceManager (iface) · Platform · Installation · Capabilities · ServiceException…   ← public
 ├── model/   ServiceSpec(+Builder) · RunAs · RestartPolicy · Schedule(+CalendarSpec) · ServiceStatus
 │   └── options/  MacOptions · SystemdOptions · WindowsOptions · OpenRcOptions                 ← public
 └── internal/                                                                                  ← package-private
@@ -514,19 +520,26 @@ com.u1.servicepal
 - **Root package:** `com.u1.servicepal`.
 - **Project rename:** GitHub repo to become *ServicePalForJava* (later; not yet). The current
   repo/dirs keep the `JLaunchd…` name until then.
-- **`ManagementScope`** name still open to your preference (§2.2).
+- **The "domain" concept** is named `Installation { PER_USER, SYSTEM_WIDE }` (§2.2).
 
 ---
 
-## 13. Open questions — status after this revision
+## 13. Resolved decisions
 
-Resolved this round: run-as identity vs. scope split (§2); explicit-scope overloads + auto-
-resolution rule (§3); optional `id`/`displayName` with UUID generation (§4.1); throw on
-wrong-platform option blocks (§6); managed-service guard overload (§3.2); root package
-`com.u1.servicepal` (§12); no Tier-2 promotions (kept core as-is).
+All step-2 open questions are now settled:
 
-Still want your nod on:
-- **A.** `ManagementScope` name (vs `ServiceLevel`/`InstallScope`).
-- **B.** Auto-resolution preferring `USER` then `SYSTEM`, with `AmbiguousServiceException` when
-  an id exists in both — good, or prefer always-explicit scope?
-- **C.** The `allowUnmanaged` parameter name (plain vs. the deliberately-blunt variant).
+- Run-as identity (`RunAs`) vs. installation (`Installation`) cleanly separated (§2).
+- **Naming:** the "domain" concept is `Installation { PER_USER, SYSTEM_WIDE }` — named after the
+  plain question it answers ("set up for one user, or the whole computer?"). Replaces the
+  earlier `ManagementScope`.
+- **Auto-resolution:** by-id ops resolve `PER_USER` first, then `SYSTEM_WIDE`;
+  `AmbiguousServiceException` if an id exists as both; explicit-`Installation` overloads to
+  disambiguate (§3).
+- **Managed-service guard:** destructive/overwrite ops throw `UnmanagedServiceException` unless
+  called with `yesDoThisToAServiceIDidNotCreate = true` — the awkward name is the penalty
+  (§3.2).
+- Optional `id`/`displayName` with `com.u1.servicepal.<uuid>` generation (§4.1); throw on
+  wrong-platform option blocks (§6); root package `com.u1.servicepal` (§12); no Tier-2
+  promotions.
+
+Design is ready for **step 3** (per-platform native-interop: renderers + command/FFM seams).

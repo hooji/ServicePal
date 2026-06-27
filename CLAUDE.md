@@ -63,17 +63,17 @@ cross-platform API is designed and approved.
 ### Core API shape (see design doc for detail)
 
 - Entry point `ServiceManager.getServiceManager()` (implicitly this platform; no scope-bound
-  variants). Lifecycle ops take just the service `id`; the manager auto-resolves scope (USER
-  first, then SYSTEM; `AmbiguousServiceException` if in both). Every by-id op also has an
-  explicit-`ManagementScope` overload. `enable`/`disable` (boot persistence) are **separate**
-  from `start`/`stop` (run now); `installEnableStart(spec)` is the combined convenience.
-  `install` is **upsert** (create or update).
+  variants). Lifecycle ops take just the service `id`; the manager auto-resolves the
+  installation (PER_USER first, then SYSTEM_WIDE; `AmbiguousServiceException` if in both). Every
+  by-id op also has an explicit-`Installation` overload. `enable`/`disable` (boot persistence)
+  are **separate** from `start`/`stop` (run now); `installEnableStart(spec)` is the combined
+  convenience. `install` is **upsert** (create or update).
 - **Two separate concepts** (don't conflate): **`RunAs`** = *who* runs it — a builder field,
   `.asCurrentUser()` (default) / `.asUser(name)` / `.asSystemDaemon()`, backed by an
-  inspectable value type; and **`ManagementScope { USER, SYSTEM }`** = *where* it's
-  registered (the "domain", abstracted; same on all platforms, OpenRC = SYSTEM-only).
-  `RunAs` (3 values) derives `ManagementScope` (2 values). Replaced the earlier `Scope` +
-  `runAsUser` redundancy.
+  inspectable value type; and **`Installation { PER_USER, SYSTEM_WIDE }`** = *is it set up for
+  one user or the whole computer* (the abstracted "domain"; named after the plain question it
+  answers; same on all platforms, OpenRC = SYSTEM_WIDE-only). `RunAs` (3 values) derives
+  `Installation` (2 values). Replaced the earlier `Scope` + `runAsUser` redundancy.
 - `ServiceSpec` (immutable builder, `builder()` with **no required arg**) holds the uniform
   core (id, command, env, workdir, identity, log paths, `autoStart`, `RestartPolicy`
   NEVER/ON_FAILURE/ALWAYS, nullable `Schedule`). **`id` and `displayName` are optional**: id
@@ -86,7 +86,8 @@ cross-platform API is designed and approved.
 - Discovery/inspection: `list()` (all), `listManaged()` / `isManaged(id)` (only services we
   created, via an embedded marker), `read(id)` → `ServiceSpec` (null if absent), `readNative(id)`
   → verbatim definition text. Destructive/overwrite ops on **unmanaged** services throw unless
-  called with the `allowUnmanaged = true` overload.
+  called with the `yesDoThisToAServiceIDidNotCreate = true` overload (the awkward name is the
+  intentional penalty).
 - `Platform` enum: `MACOS_LAUNCHD | LINUX_SYSTEMD | LINUX_OPENRC | WINDOWS` (runtime-detected).
 
 ## Research docs (step 1 output — read these first)
