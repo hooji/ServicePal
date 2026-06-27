@@ -45,21 +45,26 @@ class RcScriptWriterTest {
 
 	@Test
 	void namedUserWorkingDirEnvAndLogsRendered() {
+		// Paths are rendered via Path.toString(), so build the expected text from the same Paths
+		// to stay OS-independent (a forward-slash literal would mismatch on a Windows test runner).
+		final Path workdir = Path.of("/var/lib/svc");
+		final Path out = Path.of("/var/log/svc.log");
+		final Path err = Path.of("/var/log/svc.err");
 		final String script = writer.render(ServiceSpec.builder()
 				.id("svc")
 				.command("/bin/daemon")
 				.asUser("www-data")
-				.workingDirectory(Path.of("/var/lib/svc"))
+				.workingDirectory(workdir)
 				.env("FOO", "bar")
-				.stdout(Path.of("/var/log/svc.log"))
-				.stderr(Path.of("/var/log/svc.err"))
+				.stdout(out)
+				.stderr(err)
 				.build());
 
 		assertTrue(script.contains("command_user=\"www-data\""), script);
-		assertTrue(script.contains("directory=\"/var/lib/svc\""), script);
+		assertTrue(script.contains("directory=\"" + workdir + "\""), script);
 		assertTrue(script.contains("export FOO=\"bar\""), script);
-		assertTrue(script.contains("output_log=\"/var/log/svc.log\""), script);
-		assertTrue(script.contains("error_log=\"/var/log/svc.err\""), script);
+		assertTrue(script.contains("output_log=\"" + out + "\""), script);
+		assertTrue(script.contains("error_log=\"" + err + "\""), script);
 	}
 
 	@Test
