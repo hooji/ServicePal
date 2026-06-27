@@ -30,6 +30,19 @@ class DefaultLaunchctlTest {
 			}
 			""";
 
+	// macOS 26 (Tahoe) still prints a `pid = ` for a live job but no longer uses the exact
+	// `state = running` wording, so the old exact match read a running agent as STOPPED. A live
+	// pid is the authoritative signal.
+	private static final String LIVE_PID_OTHER_STATE_PRINT = """
+			com.example.foo = {
+				active count = 1
+				state = waiting
+				program = /usr/local/bin/foo
+				pid = 8821
+				last exit code = 0
+			}
+			""";
+
 	/** Routes commands: `id -u` returns the given uid; `launchctl print` returns the result. */
 	private static CommandRunner router(final String uid, final CommandResult print) {
 		return command -> {
@@ -54,6 +67,15 @@ class DefaultLaunchctlTest {
 		assertEquals(RunState.STOPPED, rt.state());
 		assertNull(rt.pid());
 		assertEquals(Integer.valueOf(2), rt.lastExitCode());
+	}
+
+	@Test
+	void livePidIsRunningEvenWhenStateWordIsNotExactlyRunning() {
+		// Regression for macOS 26 (Tahoe): a live pid must read as RUNNING regardless of the
+		// state word, which Tahoe changed (the old exact "running" match reported STOPPED).
+		final ServiceRuntime rt = DefaultLaunchctl.parsePrint(LIVE_PID_OTHER_STATE_PRINT);
+		assertEquals(RunState.RUNNING, rt.state());
+		assertEquals(Integer.valueOf(8821), rt.pid());
 	}
 
 	@Test

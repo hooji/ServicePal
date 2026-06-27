@@ -137,11 +137,17 @@ public final class DefaultLaunchctl implements Launchctl {
 				lastExit = parseIntOrNull(line.substring("last exit code = ".length()));
 			}
 		}
+		// A live `pid = ` in `launchctl print` means launchd is tracking a running process — the
+		// authoritative "is it running now?" signal. macOS 26 (Tahoe) changed the `state = ...`
+		// wording, so an exact "running" match is unreliable: trust the pid when present, and fall
+		// back to a lenient state-word check only when there is no pid.
 		final RunState state;
-		if (stateWord != null) {
-			state = stateWord.equals("running") ? RunState.RUNNING : RunState.STOPPED;
+		if (pid != null) {
+			state = RunState.RUNNING;
+		} else if (stateWord != null) {
+			state = stateWord.startsWith("running") ? RunState.RUNNING : RunState.STOPPED;
 		} else {
-			state = pid != null ? RunState.RUNNING : RunState.STOPPED;
+			state = RunState.STOPPED;
 		}
 		return new ServiceRuntime(state, pid, lastExit);
 	}
