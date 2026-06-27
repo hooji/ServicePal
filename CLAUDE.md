@@ -57,9 +57,16 @@ cross-platform API is designed and approved.
 - **Not yet:** all **mutation** (`install`/`uninstall`/`start`/`stop`/`enable`/`disable`) — throws
   `UnsupportedOperationException`; the **systemd/OpenRC/Windows** backends (an `UnimplementedBackend`
   reports platform + intended capabilities but throws on use).
-- **Refinement made during impl:** `ServiceStatus` gained an `installation` field (handy for
-  discovery grouping; not in the original design sketch). Native access stays behind the
-  `CommandRunner`/`Launchctl` interfaces so everything unit-tests off-platform.
+- **Refinements made during impl:**
+  - `ServiceStatus` gained an `installation` field (handy for discovery grouping).
+  - Discovery returns a **`Discovery(services, unreadable)`** — root-only/malformed plists are
+    **reported by name**, not silently dropped (`ServiceManager.discover()`; `list()` is the
+    services-only view).
+  - Live state uses **domain-targeted `launchctl print <domain>/<label>`**, not `launchctl
+    list` (which only sees the caller's GUI session domain — it never shows `system`-domain
+    daemons, even under `sudo` from a terminal). Daemons → `system/` (root-only; reported
+    `UNKNOWN` without root rather than a misleading `STOPPED`); agents → `gui/<uid>/`.
+  - Native access stays behind `CommandRunner`/`Launchctl` so everything unit-tests off-platform.
 - **Testing reach:** GitHub CI covers all three OSes for build+unit tests; full launchd behavior
   is best verified on a real Mac (owner runs macOS). The discovery CLI is the manual smoke test.
 
@@ -171,6 +178,18 @@ No UI — API only. The library:
 - Resolves the correct on-disk location using launchd best practices (see below).
 - Invokes the `launchctl` binary as a subprocess for load/unload/start/stop/status.
 - Serializes/deserializes the Apple property-list format with a dedicated plist library.
+
+## Release & PR workflow (for AI agents)
+
+- Develop on the assigned branch (see top). When you **wrap up a job that warrants a release**,
+  push a **PR from your branch to `main`**. The owner will **immediately merge** it, which
+  triggers the automated release build (`version-bump.yml` → tag → `release.yml`).
+- **On your next turn, assume that PR was merged.** Keep using the **same assigned branch**;
+  subsequent commits accrue into the **next** PR when you push it. (Each merge to `main` cuts a
+  new release, so group changes into release-worthy units.)
+- Release plumbing: `release.yml` (tag-driven build of fat jar + sources jar) and
+  `version-bump.yml` (PR-merge → next version from latest `v*` tag; `release:minor`/`major`
+  labels or `release:skip` / `[skip release]` to control). See `README.md`.
 
 ## Repo facts
 

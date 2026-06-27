@@ -2,40 +2,90 @@ package com.u1.servicepal.internal.macos;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.u1.servicepal.internal.exec.CommandResult;
 import com.u1.servicepal.internal.exec.CommandRunner;
+import com.u1.servicepal.model.RunState;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class DefaultLaunchctlTest {
 
-	private static CommandRunner stub(final CommandResult result) {
-		return command -> result;
+	private static final String RUNNING_PRINT = """
+			com.example.foo = {
+				active count = 1
+				path = /Library/LaunchDaemons/com.example.foo.plist
+				state = running
+				program = /usr/local/bin/foo
+				pid = 4242
+				last exit code = 0
+			}
+			""";
+
+	private static final String STOPPED_PRINT = """
+			com.example.foo = {
+				active count = 0
+				state = not running
+				last exit code = 2
+			}
+			""";
+
+	/** Routes commands: `id -u` returns the given uid; `launchctl print` returns the result. */
+	private static CommandRunner router(final String uid, final CommandResult print) {
+		return command -> {
+			if (command.size() >= 2 && command.get(0).equals("id")) {
+				return new CommandResult(0, uid + "\n", "");
+			}
+			return print;
+		};
 	}
 
 	@Test
-	void parsesListOutput() {
-		final String out = "PID\tStatus\tLabel\n"
-				+ "4242\t0\tcom.example.foo\n"
-				+ "-\t0\tcom.acme.bar\n"
-				+ "78\t-9\tcom.x.y\n";
-		final Launchctl launchctl = new DefaultLaunchctl(stub(new CommandResult(0, out, "")));
-
-		final Map<String, JobInfo> jobs = launchctl.listJobs();
-
-		assertEquals(3, jobs.size());
-		assertEquals(Integer.valueOf(4242), jobs.get("com.example.foo").pid());
-		assertEquals(Integer.valueOf(0), jobs.get("com.example.foo").lastStatus());
-		assertNull(jobs.get("com.acme.bar").pid(), "'-' pid parses to null");
-		assertEquals(Integer.valueOf(-9), jobs.get("com.x.y").lastStatus());
+	void parsesRunningPrint() {
+		final ServiceRuntime rt = DefaultLaunchctl.parsePrint(RUNNING_PRINT);
+		assertEquals(RunState.RUNNING, rt.state());
+		assertEquals(Integer.valueOf(4242), rt.pid());
+		assertEquals(Integer.valueOf(0), rt.lastExitCode());
 	}
 
 	@Test
-	void returnsEmptyOnFailure() {
-		final Launchctl launchctl = new DefaultLaunchctl(stub(new CommandResult(1, "", "boom")));
-		assertTrue(launchctl.listJobs().isEmpty());
+	void parsesStoppedPrint() {
+		final ServiceRuntime rt = DefaultLaunchctl.parsePrint(STOPPED_PRINT);
+		assertEquals(RunState.STOPPED, rt.state());
+		assertNull(rt.pid());
+		assertEquals(Integer.valueOf(2), rt.lastExitCode());
+	}
+
+	@Test
+	void guiRunningServiceIsRunning() {
+		final CommandRunner runner = router("501", new CommandResult(0, RUNNING_PRINT, ""));
+		final ServiceRuntime rt = new DefaultLaunchctl(runner).runtime(LaunchdDomain.GUI, "com.example.foo");
+		assertEquals(RunState.RUNNING, rt.state());
+		assertEquals(Integer.valueOf(4242), rt.pid());
+	}
+
+	@Test
+	void notFoundServiceIsStopped() {
+		final CommandRunner runner = router("501",
+				new CommandResult(113, "", "Could not find service \"x\" in domain for gui"));
+		final ServiceRuntime rt = new DefaultLaunchctl(runner).runtime(LaunchdDomain.GUI, "x");
+		assertEquals(RunState.STOPPED, rt.state());
+	}
+
+	@Test
+	void systemDomainWithoutRootIsUnknown() {
+		// Non-root uid -> we must not even claim STOPPED for the unobservable system domain.
+		final CommandRunner runner = router("501", new CommandResult(0, RUNNING_PRINT, ""));
+		final ServiceRuntime rt = new DefaultLaunchctl(runner).runtime(LaunchdDomain.SYSTEM, "com.example.foo");
+		assertEquals(RunState.UNKNOWN, rt.state());
+		assertNull(rt.pid());
+	}
+
+	@Test
+	void systemDomainAsRootReadsState() {
+		final CommandRunner runner = router("0", new CommandResult(0, RUNNING_PRINT, ""));
+		final ServiceRuntime rt = new DefaultLaunchctl(runner).runtime(LaunchdDomain.SYSTEM, "com.example.foo");
+		assertEquals(RunState.RUNNING, rt.state());
+		assertEquals(Integer.valueOf(4242), rt.pid());
 	}
 }

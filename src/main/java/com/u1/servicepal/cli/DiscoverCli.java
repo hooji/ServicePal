@@ -4,6 +4,7 @@ import com.u1.servicepal.Capabilities;
 import com.u1.servicepal.Installation;
 import com.u1.servicepal.ServiceException;
 import com.u1.servicepal.ServiceManager;
+import com.u1.servicepal.model.Discovery;
 import com.u1.servicepal.model.ServiceStatus;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -52,30 +53,45 @@ public final class DiscoverCli {
 		printCapabilities(mgr.capabilities());
 		System.out.println();
 
-		final List<ServiceStatus> services;
+		final Discovery discovery;
 		try {
-			services = managedOnly ? mgr.listManaged() : mgr.list();
+			discovery = mgr.discover();
 		} catch (final UnsupportedOperationException e) {
 			System.out.println("Discovery is implemented for macOS in this build.");
 			System.out.println("This platform's backend is coming next: " + e.getMessage());
 			return;
 		}
 
-		printGrouped(services, managedOnly);
+		final List<ServiceStatus> services = new ArrayList<>();
+		int managedCount = 0;
+		for (final ServiceStatus s : discovery.services()) {
+			if (s.managed()) {
+				managedCount++;
+			}
+			if (!managedOnly || s.managed()) {
+				services.add(s);
+			}
+		}
+
+		printGrouped(services);
+		printUnreadable(discovery.unreadable());
+
+		System.out.println();
+		System.out.println("Total: " + services.size() + " service"
+				+ (services.size() == 1 ? "" : "s")
+				+ (managedOnly ? "" : ", " + managedCount + " managed by ServicePal")
+				+ (discovery.unreadable().isEmpty() ? ""
+						: ", " + discovery.unreadable().size() + " unreadable"));
 	}
 
-	private static void printGrouped(final List<ServiceStatus> services, final boolean managedOnly) {
+	private static void printGrouped(final List<ServiceStatus> services) {
 		final Map<Installation, List<ServiceStatus>> byInstall = new LinkedHashMap<>();
 		byInstall.put(Installation.PER_USER, new ArrayList<>());
 		byInstall.put(Installation.SYSTEM_WIDE, new ArrayList<>());
-		int managedCount = 0;
 		for (final ServiceStatus s : services) {
 			final Installation key = s.installation() != null ? s.installation()
 					: Installation.SYSTEM_WIDE;
 			byInstall.computeIfAbsent(key, k -> new ArrayList<>()).add(s);
-			if (s.managed()) {
-				managedCount++;
-			}
 		}
 
 		for (final Map.Entry<Installation, List<ServiceStatus>> entry : byInstall.entrySet()) {
@@ -98,10 +114,21 @@ public final class DiscoverCli {
 			}
 			System.out.println();
 		}
+		System.out.println("(STATE is UNKNOWN for system daemons unless run with sudo — "
+				+ "their live state lives in the root-only 'system' launchd domain.)");
+	}
 
-		System.out.println("Total: " + services.size() + " service"
-				+ (services.size() == 1 ? "" : "s")
-				+ (managedOnly ? "" : ", " + managedCount + " managed by ServicePal"));
+	private static void printUnreadable(final List<String> unreadable) {
+		if (unreadable.isEmpty()) {
+			return;
+		}
+		System.out.println();
+		System.out.println("Unreadable definitions (skipped — insufficient permissions or "
+				+ "malformed):");
+		for (final String path : unreadable) {
+			System.out.println("  " + path);
+		}
+		System.out.println("(Tip: run with sudo to read root-only definitions.)");
 	}
 
 	private static void printCapabilities(final Capabilities c) {

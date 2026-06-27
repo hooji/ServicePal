@@ -3,6 +3,7 @@ package com.u1.servicepal.internal;
 import com.u1.servicepal.Capabilities;
 import com.u1.servicepal.Installation;
 import com.u1.servicepal.Platform;
+import com.u1.servicepal.model.Discovery;
 import com.u1.servicepal.model.ServiceSpec;
 import com.u1.servicepal.model.ServiceStatus;
 import java.util.List;
@@ -20,7 +21,8 @@ public interface Backend {
 	/** Which installations this platform supports (e.g. OpenRC is SYSTEM_WIDE only). */
 	List<Installation> supportedInstallations();
 
-	List<ServiceStatus> list(Installation installation);
+	/** Discover services in the given installation, plus any unreadable definition files. */
+	Discovery discover(Installation installation);
 
 	/** Parsed spec, or {@code null} if not installed in the given installation. */
 	ServiceSpec read(String id, Installation installation);

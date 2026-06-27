@@ -9,15 +9,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.u1.servicepal.AmbiguousServiceException;
 import com.u1.servicepal.Installation;
 import com.u1.servicepal.ServiceManager;
-import com.u1.servicepal.internal.macos.JobInfo;
 import com.u1.servicepal.internal.macos.Launchctl;
+import com.u1.servicepal.internal.macos.LaunchdDir;
+import com.u1.servicepal.internal.macos.LaunchdDomain;
 import com.u1.servicepal.internal.macos.LaunchdBackend;
+import com.u1.servicepal.internal.macos.ServiceRuntime;
 import com.u1.servicepal.model.ServiceStatus;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -46,18 +47,18 @@ class DefaultServiceManagerTest {
 		sysDir = Files.createDirectory(tmp.resolve("system"));
 	}
 
-	private ServiceManager managerWith(final Map<String, JobInfo> jobs) {
-		final Launchctl launchctl = () -> jobs;
-		final Map<Installation, List<Path>> dirs = Map.of(
-				Installation.PER_USER, List.of(userDir),
-				Installation.SYSTEM_WIDE, List.of(sysDir));
+	private ServiceManager manager() {
+		final Launchctl launchctl = (domain, label) -> ServiceRuntime.unknown();
+		final List<LaunchdDir> dirs = List.of(
+				new LaunchdDir(userDir, Installation.PER_USER, LaunchdDomain.GUI),
+				new LaunchdDir(sysDir, Installation.SYSTEM_WIDE, LaunchdDomain.SYSTEM));
 		return new DefaultServiceManager(new LaunchdBackend(launchctl, dirs));
 	}
 
 	@Test
 	void resolvesUniqueIdToItsInstallation() throws IOException {
 		Files.writeString(userDir.resolve("com.only.user.plist"), plist("com.only.user"));
-		final ServiceManager mgr = managerWith(Map.of());
+		final ServiceManager mgr = manager();
 
 		final ServiceStatus status = mgr.status("com.only.user");
 		assertTrue(status.installed());
@@ -67,7 +68,7 @@ class DefaultServiceManagerTest {
 
 	@Test
 	void absentIdYieldsAbsentStatusAndNullRead() {
-		final ServiceManager mgr = managerWith(Map.of());
+		final ServiceManager mgr = manager();
 
 		assertFalse(mgr.status("com.nope").installed());
 		assertNull(mgr.read("com.nope"));
@@ -78,23 +79,25 @@ class DefaultServiceManagerTest {
 	void ambiguousIdInBothInstallationsThrows() throws IOException {
 		Files.writeString(userDir.resolve("com.dup.svc.plist"), plist("com.dup.svc"));
 		Files.writeString(sysDir.resolve("com.dup.svc.plist"), plist("com.dup.svc"));
-		final ServiceManager mgr = managerWith(Map.of());
+		final ServiceManager mgr = manager();
 
 		assertThrows(AmbiguousServiceException.class, () -> mgr.status("com.dup.svc"));
 	}
 
 	@Test
-	void listMergesInstallationsAndManagedFiltering() throws IOException {
+	void discoverMergesInstallationsAndManagedFiltering() throws IOException {
 		Files.writeString(userDir.resolve("com.only.user.plist"), plist("com.only.user"));
-		final ServiceManager mgr = managerWith(Map.of());
+		final ServiceManager mgr = manager();
 
 		assertEquals(1, mgr.list().size());
+		assertEquals(1, mgr.discover().services().size());
+		assertTrue(mgr.discover().unreadable().isEmpty());
 		assertTrue(mgr.listManaged().isEmpty(), "no managed marker in these plists");
 	}
 
 	@Test
 	void mutationNotYetImplemented() {
-		final ServiceManager mgr = managerWith(Map.of());
+		final ServiceManager mgr = manager();
 		assertThrows(UnsupportedOperationException.class, () -> mgr.start("com.whatever"));
 	}
 }

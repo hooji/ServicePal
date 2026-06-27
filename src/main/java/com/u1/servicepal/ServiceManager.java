@@ -2,6 +2,7 @@ package com.u1.servicepal;
 
 import com.u1.servicepal.internal.DefaultServiceManager;
 import com.u1.servicepal.internal.Platforms;
+import com.u1.servicepal.model.Discovery;
 import com.u1.servicepal.model.ServiceSpec;
 import com.u1.servicepal.model.ServiceStatus;
 import java.util.List;
@@ -36,7 +37,13 @@ public interface ServiceManager {
 
 	// --- discovery & inspection ---
 
-	/** All services visible in reachable installations. */
+	/** Discover services across reachable installations, plus any unreadable definition files. */
+	Discovery discover();
+
+	/** Discover within a single installation. */
+	Discovery discover(Installation installation);
+
+	/** All services visible in reachable installations (the {@link #discover()} services). */
 	List<ServiceStatus> list();
 
 	/** Only services this library created (managed-by marker present). */

@@ -6,6 +6,7 @@ import com.u1.servicepal.Installation;
 import com.u1.servicepal.Platform;
 import com.u1.servicepal.ServiceManager;
 import com.u1.servicepal.internal.macos.LaunchdBackend;
+import com.u1.servicepal.model.Discovery;
 import com.u1.servicepal.model.ServiceSpec;
 import com.u1.servicepal.model.ServiceStatus;
 import java.util.ArrayList;
@@ -43,12 +44,25 @@ public final class DefaultServiceManager implements ServiceManager {
 	// --- discovery & inspection ---
 
 	@Override
-	public List<ServiceStatus> list() {
-		final List<ServiceStatus> out = new ArrayList<>();
+	public Discovery discover() {
+		final List<ServiceStatus> services = new ArrayList<>();
+		final List<String> unreadable = new ArrayList<>();
 		for (final Installation installation : backend.supportedInstallations()) {
-			out.addAll(backend.list(installation));
+			final Discovery d = backend.discover(installation);
+			services.addAll(d.services());
+			unreadable.addAll(d.unreadable());
 		}
-		return out;
+		return new Discovery(services, unreadable);
+	}
+
+	@Override
+	public Discovery discover(final Installation installation) {
+		return backend.discover(installation);
+	}
+
+	@Override
+	public List<ServiceStatus> list() {
+		return discover().services();
 	}
 
 	@Override

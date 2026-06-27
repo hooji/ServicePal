@@ -3,6 +3,7 @@ package com.u1.servicepal.internal;
 import com.u1.servicepal.Capabilities;
 import com.u1.servicepal.Installation;
 import com.u1.servicepal.Platform;
+import com.u1.servicepal.model.Discovery;
 import com.u1.servicepal.model.ServiceSpec;
 import com.u1.servicepal.model.ServiceStatus;
 import java.util.List;
@@ -39,7 +40,7 @@ public final class UnimplementedBackend implements Backend {
 	}
 
 	@Override
-	public List<ServiceStatus> list(final Installation installation) {
+	public Discovery discover(final Installation installation) {
 		throw notImplemented();
 	}
 

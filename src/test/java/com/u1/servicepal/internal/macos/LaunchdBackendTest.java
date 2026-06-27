@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.u1.servicepal.Installation;
 import com.u1.servicepal.model.CalendarSchedule;
+import com.u1.servicepal.model.Discovery;
 import com.u1.servicepal.model.RestartPolicy;
 import com.u1.servicepal.model.RunAs;
 import com.u1.servicepal.model.RunState;
@@ -17,7 +18,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -63,23 +63,27 @@ class LaunchdBackendTest {
 		sysDir = Files.createDirectory(tmp.resolve("LaunchDaemons"));
 		Files.writeString(userDir.resolve("com.example.foo.plist"), MANAGED_FOO);
 		Files.writeString(sysDir.resolve("com.acme.backup.plist"), UNMANAGED_BACKUP);
+		Files.writeString(sysDir.resolve("com.broken.bad.plist"), "this is not a plist");
 
-		final Launchctl launchctl = () -> Map.of("com.example.foo", new JobInfo(4242, 0));
-		final Map<Installation, List<Path>> dirs = Map.of(
-				Installation.PER_USER, List.of(userDir),
-				Installation.SYSTEM_WIDE, List.of(sysDir));
+		// foo is running; everything else reports stopped.
+		final Launchctl launchctl = (domain, label) -> "com.example.foo".equals(label)
+				? new ServiceRuntime(RunState.RUNNING, 4242, 0)
+				: new ServiceRuntime(RunState.STOPPED, null, null);
+		final List<LaunchdDir> dirs = List.of(
+				new LaunchdDir(userDir, Installation.PER_USER, LaunchdDomain.GUI),
+				new LaunchdDir(sysDir, Installation.SYSTEM_WIDE, LaunchdDomain.SYSTEM));
 		backend = new LaunchdBackend(launchctl, dirs);
 	}
 
 	@Test
-	void listsPerUserWithLiveState() {
-		final List<ServiceStatus> services = backend.list(Installation.PER_USER);
-		assertEquals(1, services.size());
+	void discoversPerUserWithLiveState() {
+		final Discovery d = backend.discover(Installation.PER_USER);
+		assertEquals(1, d.services().size());
+		assertTrue(d.unreadable().isEmpty());
 
-		final ServiceStatus foo = services.get(0);
+		final ServiceStatus foo = d.services().get(0);
 		assertEquals("com.example.foo", foo.id());
 		assertEquals(Installation.PER_USER, foo.installation());
-		assertTrue(foo.installed());
 		assertTrue(foo.managed(), "marker key present");
 		assertTrue(foo.enabled(), "RunAtLoad maps to enabled");
 		assertEquals(RunState.RUNNING, foo.state());
@@ -87,15 +91,21 @@ class LaunchdBackendTest {
 	}
 
 	@Test
-	void listsSystemWideUnmanagedStopped() {
-		final List<ServiceStatus> services = backend.list(Installation.SYSTEM_WIDE);
-		assertEquals(1, services.size());
+	void reportsUnreadableDefinitionsByName() {
+		final Discovery d = backend.discover(Installation.SYSTEM_WIDE);
 
-		final ServiceStatus backup = services.get(0);
-		assertEquals("com.acme.backup", backup.id());
+		assertEquals(1, d.services().size(), "only the readable backup is a service");
+		assertEquals("com.acme.backup", d.services().get(0).id());
+		assertEquals(1, d.unreadable().size());
+		assertTrue(d.unreadable().get(0).endsWith("com.broken.bad.plist"));
+	}
+
+	@Test
+	void systemServiceUnmanagedStopped() {
+		final ServiceStatus backup = backend.discover(Installation.SYSTEM_WIDE).services().get(0);
 		assertFalse(backup.managed());
 		assertFalse(backup.enabled());
-		assertEquals(RunState.STOPPED, backup.state(), "not in launchctl list");
+		assertEquals(RunState.STOPPED, backup.state());
 		assertNull(backup.pid());
 	}
 
