@@ -128,7 +128,7 @@ jobs:
           set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${NEW_TAG}" -m "ServicePalForJava ${NEW_TAG}"
+          git tag -a "${NEW_TAG}" -m "ServicePal ${NEW_TAG}"
           git push origin "refs/tags/${NEW_TAG}"
 
       - name: Trigger release build

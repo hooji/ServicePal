@@ -48,7 +48,7 @@ public final class DiscoverCli {
 			return;
 		}
 
-		System.out.println("ServicePalForJava — service discovery");
+		System.out.println("ServicePal — service discovery");
 		System.out.println("Platform: " + mgr.platform());
 		printCapabilities(mgr.capabilities());
 		System.out.println();

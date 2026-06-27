@@ -10,7 +10,7 @@
 	<version>${revision}</version>
 	<packaging>jar</packaging>
 
-	<name>ServicePalForJava</name>
+	<name>ServicePal</name>
 	<description>A clean, immutable-first Java API for creating and managing OS-level
 		background services/daemons across macOS, Linux, and Windows.</description>
 
