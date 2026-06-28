@@ -173,10 +173,12 @@ dispatcher), so the jar's role as the Windows "execution helper" is preserved.
   that `restart` is reliable on all four platforms.)
 - **Depends only on the `ServiceManager` interface**, so a `DemoServiceManager` (in-memory fake) +
   `DemoData` drive demos/screenshots/tests. Library calls run off the EDT on `SwingWorker`s.
-- **Dark theme by default** on every platform: the JDK's built-in **Nimbus** L&F themed dark via a
-  base-palette override (`ServicePalGui.applyDarkPalette`) — no third-party L&F (e.g. FlatLaf), to
-  keep the no-new-dependency rule. The master list paints its own opaque cell backgrounds + sets
-  selection colors directly (Nimbus renders custom renderers non-opaque otherwise).
+- **Native look-and-feel** on every platform: `UIManager.getSystemLookAndFeelClassName()`
+  (`ServicePalGui.installLookAndFeel`) — Aqua on macOS, the Windows L&F on Windows, GTK/Metal on
+  Linux; no third-party L&F (e.g. FlatLaf), keeping the no-new-dependency rule. macOS also sets
+  `apple.awt.application.appearance=system` so the window follows the OS light/dark setting (Aqua
+  otherwise forces light). The master list's renderers set only text/icon/state-color and let the
+  L&F paint the row + selection highlight.
 - **Screenshots in CI** (`.github/workflows/gui-screenshots.yml`): captures the window by painting
   its Swing root pane into a PNG via the **`paint`** path (double-buffering off), **not** `printAll`
   (the print path makes `JTable` omit the selection) and **not** `Robot` (black on non-interactive

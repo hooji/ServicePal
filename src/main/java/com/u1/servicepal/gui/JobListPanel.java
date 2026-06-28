@@ -22,10 +22,6 @@ final class JobListPanel extends JTable {
 		setShowVerticalLines(false);
 		setFillsViewportHeight(true);
 		setIntercellSpacing(new java.awt.Dimension(0, 0));
-		// Set selection colors directly on the table (not just via UIManager) so they are
-		// authoritative under Nimbus, where the renderer paints them explicitly.
-		setSelectionBackground(new java.awt.Color(0x2D, 0x5B, 0xA3));
-		setSelectionForeground(new java.awt.Color(0xF2, 0xF2, 0xF2));
 		getTableHeader().setReorderingAllowed(false);
 		getColumnModel().getColumn(0).setPreferredWidth(230);
 		getColumnModel().getColumn(1).setPreferredWidth(110);
@@ -84,34 +80,22 @@ final class JobListPanel extends JTable {
 				setIconTextGap(8);
 			}
 			setBorder(javax.swing.BorderFactory.createEmptyBorder(0, 8, 0, 0));
-			// Paint our own selection: under Nimbus a custom renderer is non-opaque, so the row
-			// background otherwise never shows. Be explicit so the selected row highlights clearly.
-			setOpaque(true);
-			setBackground(isSelected ? table.getSelectionBackground() : table.getBackground());
-			setForeground(isSelected ? table.getSelectionForeground() : table.getForeground());
 			return this;
 		}
 	}
 
-	/** Column 1: the friendly run-state label, colored by state (light when the row is selected). */
+	/** Column 1: the friendly run-state label, colored by state (the L&F owns the selected row). */
 	private static final class StateRenderer extends DefaultTableCellRenderer {
 		@Override
 		public Component getTableCellRendererComponent(final JTable table, final Object value,
 				final boolean isSelected, final boolean hasFocus, final int row, final int column) {
 			super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
-			RunState state = null;
-			if (value instanceof RunState s) {
-				state = s;
-				setText(StatusVisuals.label(s));
-			}
-			setOpaque(true);
-			setBackground(isSelected ? table.getSelectionBackground() : table.getBackground());
-			if (isSelected) {
-				setForeground(table.getSelectionForeground());
-			} else if (state != null) {
-				setForeground(StatusVisuals.color(state));
-			} else {
-				setForeground(table.getForeground());
+			if (value instanceof RunState state) {
+				setText(StatusVisuals.label(state));
+				// Color the label by state, but let the L&F own the selected row's foreground.
+				if (!isSelected) {
+					setForeground(StatusVisuals.color(state));
+				}
 			}
 			return this;
 		}

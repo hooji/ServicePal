@@ -29,20 +29,20 @@ the platform's `capabilities()`:
 This keeps the UI uniform and avoids privilege prompts on the platforms that don't need them. When a
 privileged op fails, the controller shows a friendly "run as administrator / with sudo" hint.
 
-## Toolkit: Swing + a themed dark Nimbus look
+## Toolkit: Swing with the native look-and-feel
 
 Swing is bundled in the JDK (zero new runtime dependencies — the library still only ships
 `dd-plist`), runs on the JDK 25 baseline everywhere, and compiles into the existing shaded jar.
 (JavaFX was rejected: heavier, platform-native dependencies, awkward headless CI.)
 
-The GUI defaults to a **dark theme on every platform**. Rather than add a third-party
-look-and-feel (e.g. FlatLaf) — which would break the project's no-new-dependency rule — it themes
-the JDK's built-in **Nimbus** look-and-feel by overriding its base palette
-(`ServicePalGui.applyDarkPalette`). Nimbus derives most component colors from a handful of base
-keys, so a dark palette propagates consistently. The master list sets its selection colors directly
-and its cell renderers paint their own opaque background (Nimbus renders custom renderers
-non-opaque otherwise), so the selected row highlights clearly. Per-platform differences are limited
-to system fonts; the theme itself is uniform.
+The GUI uses each platform's **native look-and-feel** (`UIManager.getSystemLookAndFeelClassName()`):
+Aqua on macOS, the Windows look on Windows, GTK/Metal on Linux. On macOS it also sets
+`apple.awt.application.appearance=system` so the window follows the OS light/dark setting (Aqua
+otherwise forces light). This keeps the window at home on each OS without adding a third-party
+look-and-feel (e.g. FlatLaf), which would break the project's no-new-dependency rule. The master
+list's cell renderers set only their text, icon, and (for the state column) the state color, leaving
+the L&F to paint the row and its selection highlight. Per-platform differences are the native widget
+styling itself; the layout is identical everywhere.
 
 ## Entry point — `-ui`, opt-in by design
 
