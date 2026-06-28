@@ -103,6 +103,11 @@ macOS-backend shape.
   services (`list()` is sidecar-scoped there); the lower-JDK Mac/Linux-only build. `UnimplementedBackend`
   is now unused (all four platforms have real backends) but kept as a clear "not implemented" signal.
 - **Refinements made during impl:**
+  - **macOS `displayName` round-trips** via a side-band plist key
+    (`com.u1.servicepal.DisplayName`, written only when it differs from the id) because launchd has
+    no native friendly-name field (its `Label` is the id). systemd (`Description=`), OpenRC
+    (`description=`), and Windows (sidecar JSON) already round-trip it. `install` rewrites the whole
+    plist, so renames/clears never leave a stale key.
   - `ServiceStatus` gained an `installation` field (handy for discovery grouping).
   - Discovery returns a **`Discovery(services, unreadable)`** — root-only/malformed plists are
     **reported by name**, not silently dropped (`ServiceManager.discover()`; `list()` is the

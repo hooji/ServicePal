@@ -127,6 +127,34 @@ class LaunchdBackendTest {
 	}
 
 	@Test
+	void upsertRoundTripsDisplayNameChangesWithNoStaleKey() {
+		final String id = "com.u1.servicepal.test.named";
+
+		// 1. Install with no explicit display name → it defaults to the id (the generated-name case).
+		backend.install(ServiceSpec.builder().id(id).command("/bin/sleep", "60")
+				.asCurrentUser().build(), false);
+		assertEquals(id, backend.read(id, Installation.PER_USER).displayName(), "defaults to id");
+
+		// 2. Edit: assign a real name. The upsert rewrites the plist, so the name now round-trips.
+		backend.install(ServiceSpec.builder().id(id).displayName("My Backup")
+				.command("/bin/sleep", "60").asCurrentUser().build(), false);
+		assertEquals("My Backup", backend.read(id, Installation.PER_USER).displayName());
+
+		// 3. Edit again: change the name. The new value replaces the old.
+		backend.install(ServiceSpec.builder().id(id).displayName("Nightly Backup")
+				.command("/bin/sleep", "60").asCurrentUser().build(), false);
+		assertEquals("Nightly Backup", backend.read(id, Installation.PER_USER).displayName());
+
+		// 4. Edit again: clear the name (it falls back to the id). Because install rewrites the whole
+		//    plist (it does not merge), the side-band key is dropped — not left behind as stale.
+		backend.install(ServiceSpec.builder().id(id).command("/bin/sleep", "60")
+				.asCurrentUser().build(), false);
+		assertEquals(id, backend.read(id, Installation.PER_USER).displayName(), "no stale name");
+		assertFalse(backend.readNative(id, Installation.PER_USER).contains(PlistReader.DISPLAY_NAME_KEY),
+				"the display-name key is removed when the name is cleared");
+	}
+
+	@Test
 	void lifecycleVerbsTargetTheRightDomain() {
 		backend.install(sleepSpec(), false);
 		final String id = "com.u1.servicepal.test.sleeper";
