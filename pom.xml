@@ -93,7 +93,7 @@
 							<transformers>
 								<transformer
 										implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-									<mainClass>com.u1.servicepal.cli.DiscoverCli</mainClass>
+									<mainClass>com.u1.servicepal.Main</mainClass>
 									<manifestEntries>
 										<!-- Grant FFM native access (the Windows SCM host) for
 											`java -jar` under JEP 472 integrity-by-default, so the

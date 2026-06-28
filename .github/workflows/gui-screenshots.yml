@@ -1,0 +1,108 @@
+name: GUI Screenshots
+
+# Builds the runnable jar and captures the desktop GUI on each supported platform so we can review
+# how it looks natively. Two flavors:
+#   * demo  — seeded in-memory data (deterministic, no OS changes, no privileges) on ubuntu/macOS/
+#             Windows. This is the layout/look review.
+#   * live  — the REAL backend: install + start a throwaway job, screenshot it actually running,
+#             then uninstall. End-to-end proof on macOS (per-user agent, no root) and Windows
+#             (admin service via the FFM host). Marked non-blocking — the demo shots are the
+#             dependable deliverable; CI (ci.yml) already gates the real backend lifecycle.
+#
+# Screenshots are captured by painting the window's Swing content into a PNG (printAll), so they do
+# not depend on a visible, interactive desktop. Headless Linux still needs a display for AWT, so the
+# Linux leg runs under Xvfb. Artifacts are uploaded for download/review.
+#
+# Manual (workflow_dispatch) plus pushes to the GUI dev branch, mirroring probe.yml.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "claude/gui-tool-proposal-**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gui-screenshots-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  demo:
+    name: demo screenshots (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - name: Build jar
+        run: mvn -B -ntp -DskipTests package
+
+      # Headless Linux needs a display for AWT/Swing — run under Xvfb. The platform is auto-detected
+      # on each runner (systemd on ubuntu, launchd on macOS, services on Windows), so the badge and
+      # native paths match.
+      - name: Capture demo screenshots (Linux/Xvfb)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          xvfb-run -a --server-args="-screen 0 1280x800x24" \
+            java -jar target/servicepal.jar -ui --screenshot shots
+
+      - name: Capture demo screenshots (macOS / Windows)
+        if: runner.os != 'Linux'
+        run: java -jar target/servicepal.jar -ui --screenshot shots
+
+      - name: Upload demo screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-screenshots-${{ matrix.os }}
+          path: shots/*.png
+          if-no-files-found: warn
+
+  live:
+    name: live screenshot (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Bonus end-to-end proof; never blocks. Real lifecycle gating already lives in ci.yml.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - name: Build jar
+        run: mvn -B -ntp -DskipTests package
+
+      # macOS installs a per-user launchd agent (no root). Windows installs a machine-wide service
+      # via the bundled FFM host (the runner is admin). --enable-native-access is required for the
+      # Windows FFM path and harmless on macOS.
+      - name: Capture live screenshot
+        run: java --enable-native-access=ALL-UNNAMED -jar target/servicepal.jar -ui --screenshot-live shots
+
+      - name: Upload live screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-screenshot-${{ matrix.os }}
+          path: shots/*.png
+          if-no-files-found: warn

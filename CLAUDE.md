@@ -125,6 +125,40 @@ macOS-backend shape.
   limitation: global macOS **agents** (`/Library/LaunchAgents`) read as `UNKNOWN` under `sudo`,
   because root's `gui/0` session can't see them (they live in the console user's `gui/<uid>`).
 
+## Desktop GUI (built on top of the finished library)
+
+A small **Swing** GUI now sits on top of the library (`com.u1.servicepal.gui`), targeting only the
+90%+ common case: set up jobs to be auto-started and kept running. It is **opt-in** — `java -jar
+servicepal.jar -ui` (aliases `--ui`/`gui`); the no-argument default is still `DiscoverCli`, and a
+thin `com.u1.servicepal.Main` dispatcher (now the jar's `Main-Class`) routes `-ui` → GUI and
+everything else → `DiscoverCli`. **The Windows service host is unaffected** — the backend launches
+it as `javaw -cp <jar> ...windows.ServiceHost --id <id>` (explicit main class, never via the
+dispatcher), so the jar's role as the Windows "execution helper" is preserved.
+
+- **What it exposes:** master-detail list of managed jobs (status dots, pid, state), add/edit (name,
+  command, arguments, working folder, *start automatically*, *if it stops* → `RestartPolicy`),
+  start/stop/restart, remove. Hides schedules, run-as identity, `.mac()/.systemd()/...` blocks — the
+  UI is identical on all four platforms.
+- **Auto privilege model** (`JobSpecs.fromForm` + `capabilities()`): per-user where supported
+  (macOS/systemd → no admin, login start), else system daemon (Windows/OpenRC → boot start, needs
+  elevation). The GUI never mentions `RunAs`/`Installation`.
+- **Depends only on the `ServiceManager` interface**, so a `DemoServiceManager` (in-memory fake) +
+  `DemoData` drive demos/screenshots/tests. Library calls run off the EDT on `SwingWorker`s.
+- **Dark theme by default** on every platform: the JDK's built-in **Nimbus** L&F themed dark via a
+  base-palette override (`ServicePalGui.applyDarkPalette`) — no third-party L&F (e.g. FlatLaf), to
+  keep the no-new-dependency rule. The master list paints its own opaque cell backgrounds + sets
+  selection colors directly (Nimbus renders custom renderers non-opaque otherwise).
+- **Screenshots in CI** (`.github/workflows/gui-screenshots.yml`): captures the window by painting
+  its Swing root pane into a PNG via the **`paint`** path (double-buffering off), **not** `printAll`
+  (the print path makes `JTable` omit the selection) and **not** `Robot` (black on non-interactive
+  Windows). **demo** shots (seeded data) on ubuntu/macOS/Windows (Linux under Xvfb); **live** shots
+  (real backend install→running→uninstall) on macOS (per-user, no root) + Windows (admin, FFM host),
+  non-blocking. Uploaded as artifacts. OpenRC skipped (no display; same Linux look as systemd).
+- **New tests:** `JobSpecsTest` (privilege model, tokenizer, mapping) + `DemoServiceManagerTest`
+  (lifecycle) — headless, platform-independent. Design: `docs/design/gui-design.md`.
+- **No new runtime deps** (Swing is in the JDK); the build/JDK-25 baseline is unchanged. The GUI is
+  JDK-21-source-compatible but lives in the same module, which targets release 25.
+
 ## Design docs (step 2)
 
 - `docs/design/api-design.md` — **the API design** (approved, now being implemented): the

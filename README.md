@@ -166,6 +166,28 @@ java -jar servicepal.jar --managed    # only services ServicePal created
 lifecycle against the live OS; continuous integration uses it to validate mutation on each
 platform.
 
+## Desktop GUI
+
+The same jar also ships a small cross-platform desktop GUI for the **common case** — set up jobs to
+be auto-started and kept running in the background. It is **opt-in** via an explicit first argument
+(the no-argument default stays the discovery CLI):
+
+```sh
+java -jar servicepal.jar -ui          # launch the GUI (also: --ui, gui)
+java -jar servicepal.jar -ui --demo   # explore with in-memory demo data (no OS changes)
+```
+
+It shows your background jobs and their run state, and lets you add one (name + command, optional
+working folder, *start automatically*, and what to do *if it stops*), start/stop/restart it, or
+remove it. It deliberately hides everything platform-specific (schedules, run-as identity, the
+`.mac()/.systemd()/...` option blocks): the UI is identical on every platform. Where the platform
+supports per-user services (macOS, systemd) it installs without admin and starts at login; where it
+does not (Windows, OpenRC) it installs a system-wide service (run the app elevated).
+
+Built with Swing and a themed dark look (the JDK's built-in Nimbus look-and-feel, themed dark — no
+new dependencies). CI captures screenshots of the GUI on macOS, Linux, and Windows for visual
+review — see `.github/workflows/gui-screenshots.yml` and `docs/design/gui-design.md`.
+
 ## Build & test
 
 ```sh
