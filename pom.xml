@@ -38,6 +38,17 @@
 			<version>1.28</version>
 		</dependency>
 
+		<!--
+			FlatLaf — the desktop GUI's look-and-feel on macOS (follows the system light/dark
+			setting via FlatLightLaf/FlatDarkLaf). Confined to com.u1.servicepal.gui; the library
+			core and the Windows service host never touch it. Other platforms use the native L&F.
+		-->
+		<dependency>
+			<groupId>com.formdev</groupId>
+			<artifactId>flatlaf</artifactId>
+			<version>3.7.1</version>
+		</dependency>
+
 		<dependency>
 			<groupId>org.junit.jupiter</groupId>
 			<artifactId>junit-jupiter</artifactId>

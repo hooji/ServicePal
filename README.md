@@ -184,9 +184,9 @@ remove it. It deliberately hides everything platform-specific (schedules, run-as
 supports per-user services (macOS, systemd) it installs without admin and starts at login; where it
 does not (Windows, OpenRC) it installs a system-wide service (run the app elevated).
 
-Built with Swing using each platform's native look-and-feel (Aqua on macOS — following the OS
-light/dark setting — the Windows look on Windows, GTK/Metal on Linux; no new dependencies). CI
-captures screenshots of the GUI on macOS, Linux, and Windows for visual review — see
+Built with Swing. On macOS it uses [FlatLaf](https://www.formdev.com/flatlaf/), following the OS
+light/dark setting; on Windows and Linux it uses the platform's native look-and-feel. CI captures
+screenshots of the GUI on macOS, Linux, and Windows for visual review — see
 `.github/workflows/gui-screenshots.yml` and `docs/design/gui-design.md`.
 
 ## Build & test

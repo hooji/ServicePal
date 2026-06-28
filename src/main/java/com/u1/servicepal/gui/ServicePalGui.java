@@ -1,5 +1,7 @@
 package com.u1.servicepal.gui;
 
+import com.formdev.flatlaf.FlatDarkLaf;
+import com.formdev.flatlaf.FlatLightLaf;
 import com.u1.servicepal.Platform;
 import com.u1.servicepal.ServiceManager;
 import com.u1.servicepal.internal.Platforms;
@@ -172,16 +174,47 @@ public final class ServicePalGui {
 	// --- shared ---
 
 	/**
-	 * Use the platform's native look-and-feel so the window looks at home on each OS (Aqua on macOS,
-	 * the Windows L&F on Windows, GTK/Metal on Linux). On macOS we also opt into the system
-	 * appearance so the window follows the OS light/dark setting (Aqua otherwise forces light).
+	 * Install the look-and-feel. On macOS we use FlatLaf, following the system light/dark setting
+	 * ({@link FlatLightLaf} / {@link FlatDarkLaf}). On Windows and Linux we use the platform's
+	 * native look-and-feel.
 	 */
 	private static void installLookAndFeel() {
-		System.setProperty("apple.awt.application.appearance", "system");
+		if (isMacOs()) {
+			// Follow the system setting (macOS):
+			if (systemIsDark()) {
+				FlatDarkLaf.setup();
+			} else {
+				FlatLightLaf.setup();
+			}
+			return;
+		}
 		try {
 			UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
 		} catch (final Exception e) {
 			// keep the default cross-platform look-and-feel
+		}
+	}
+
+	private static boolean isMacOs() {
+		return System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("mac");
+	}
+
+	/**
+	 * Whether macOS is currently in dark mode. Reads the global {@code AppleInterfaceStyle} default,
+	 * which is {@code "Dark"} in dark mode and unset (so the read fails) in light mode. Any failure
+	 * is treated as light.
+	 */
+	private static boolean systemIsDark() {
+		try {
+			final Process process = new ProcessBuilder(
+					"defaults", "read", "-g", "AppleInterfaceStyle")
+					.redirectErrorStream(true).start();
+			final byte[] out = process.getInputStream().readAllBytes();
+			process.waitFor();
+			return new String(out, java.nio.charset.StandardCharsets.UTF_8)
+					.toLowerCase(java.util.Locale.ROOT).contains("dark");
+		} catch (final Exception e) {
+			return false;   // default to light if the setting can't be read
 		}
 	}
 
