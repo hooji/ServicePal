@@ -29,13 +29,20 @@ the platform's `capabilities()`:
 This keeps the UI uniform and avoids privilege prompts on the platforms that don't need them. When a
 privileged op fails, the controller shows a friendly "run as administrator / with sudo" hint.
 
-## Toolkit: Swing + the system look-and-feel
+## Toolkit: Swing + a themed dark Nimbus look
 
 Swing is bundled in the JDK (zero new runtime dependencies — the library still only ships
-`dd-plist`), runs on the JDK 25 baseline everywhere, and the **system look-and-feel** gives a
-genuinely native appearance per platform (Aqua / Windows / GTK-or-Metal) — exactly what the
-screenshot review is meant to confirm. It compiles into the existing shaded jar. (JavaFX was
-rejected: heavier, platform-native dependencies, awkward headless CI.)
+`dd-plist`), runs on the JDK 25 baseline everywhere, and compiles into the existing shaded jar.
+(JavaFX was rejected: heavier, platform-native dependencies, awkward headless CI.)
+
+The GUI defaults to a **dark theme on every platform**. Rather than add a third-party
+look-and-feel (e.g. FlatLaf) — which would break the project's no-new-dependency rule — it themes
+the JDK's built-in **Nimbus** look-and-feel by overriding its base palette
+(`ServicePalGui.applyDarkPalette`). Nimbus derives most component colors from a handful of base
+keys, so a dark palette propagates consistently. The master list sets its selection colors directly
+and its cell renderers paint their own opaque background (Nimbus renders custom renderers
+non-opaque otherwise), so the selected row highlights clearly. Per-platform differences are limited
+to system fonts; the theme itself is uniform.
 
 ## Entry point — `-ui`, opt-in by design
 
@@ -85,12 +92,13 @@ All library calls run on a `SwingWorker` (the backends shell out to `launchctl` 
 
 ## Screenshot harness (CI)
 
-Captures are produced by painting the window's Swing root pane into a `BufferedImage`
-(`printAll`), **not** by a `Robot` screen grab. Swing widgets — including the native-themed macOS
-Aqua and Windows look-and-feels — paint themselves into the image, so capture does not depend on a
-visible, interactive desktop (a common source of black captures on Windows CI). Headless Linux still
-needs a display for AWT, so the Linux leg runs under **Xvfb**; on Linux the GUI asks Swing to draw
-its own title bar so the captured window is framed.
+Captures are produced by painting the window's Swing root pane into a `BufferedImage`, **not** by a
+`Robot` screen grab. Swing widgets paint themselves into the image, so capture does not depend on a
+visible, interactive desktop (a common source of black captures on Windows CI). It uses the
+**`paint`** path (double-buffering disabled), not `printAll`: `printAll` is the *print* path, and
+`JTable` deliberately omits the selection highlight when printing, so the selected row would not
+show. Headless Linux still needs a display for AWT, so the Linux leg runs under **Xvfb**. OS-drawn
+title bars are not part of the capture (the root pane is) — the widgets are what we review.
 
 `.github/workflows/gui-screenshots.yml`:
 

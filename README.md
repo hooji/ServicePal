@@ -184,9 +184,9 @@ remove it. It deliberately hides everything platform-specific (schedules, run-as
 supports per-user services (macOS, systemd) it installs without admin and starts at login; where it
 does not (Windows, OpenRC) it installs a system-wide service (run the app elevated).
 
-Built with Swing and the system look-and-feel (no new dependencies). CI captures screenshots of the
-GUI on macOS, Linux, and Windows for visual review — see `.github/workflows/gui-screenshots.yml` and
-`docs/design/gui-design.md`.
+Built with Swing and a themed dark look (the JDK's built-in Nimbus look-and-feel, themed dark — no
+new dependencies). CI captures screenshots of the GUI on macOS, Linux, and Windows for visual
+review — see `.github/workflows/gui-screenshots.yml` and `docs/design/gui-design.md`.
 
 ## Build & test
 

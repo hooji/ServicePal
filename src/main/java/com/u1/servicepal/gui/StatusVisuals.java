@@ -7,10 +7,11 @@ import javax.swing.Icon;
 /** Colors, status dots, and friendly labels for a {@link RunState}. */
 final class StatusVisuals {
 
-	private static final Color GREEN = new Color(0x2E, 0xA0, 0x43);
-	private static final Color GREY = new Color(0x8A, 0x8A, 0x8A);
-	private static final Color RED = new Color(0xC0, 0x39, 0x2B);
-	private static final Color AMBER = new Color(0xE0, 0x8A, 0x1E);
+	// Tuned for legibility on the dark theme.
+	private static final Color GREEN = new Color(0x4C, 0xC0, 0x5E);
+	private static final Color GREY = new Color(0xA8, 0xAD, 0xB3);
+	private static final Color RED = new Color(0xE0, 0x5A, 0x4C);
+	private static final Color AMBER = new Color(0xE0, 0x9A, 0x3A);
 
 	private StatusVisuals() {
 	}

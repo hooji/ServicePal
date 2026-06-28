@@ -144,9 +144,14 @@ dispatcher), so the jar's role as the Windows "execution helper" is preserved.
   elevation). The GUI never mentions `RunAs`/`Installation`.
 - **Depends only on the `ServiceManager` interface**, so a `DemoServiceManager` (in-memory fake) +
   `DemoData` drive demos/screenshots/tests. Library calls run off the EDT on `SwingWorker`s.
+- **Dark theme by default** on every platform: the JDK's built-in **Nimbus** L&F themed dark via a
+  base-palette override (`ServicePalGui.applyDarkPalette`) — no third-party L&F (e.g. FlatLaf), to
+  keep the no-new-dependency rule. The master list paints its own opaque cell backgrounds + sets
+  selection colors directly (Nimbus renders custom renderers non-opaque otherwise).
 - **Screenshots in CI** (`.github/workflows/gui-screenshots.yml`): captures the window by painting
-  its Swing root pane into a PNG (`printAll`, not `Robot` — robust on non-interactive Windows
-  sessions). **demo** shots (seeded data) on ubuntu/macOS/Windows (Linux under Xvfb); **live** shots
+  its Swing root pane into a PNG via the **`paint`** path (double-buffering off), **not** `printAll`
+  (the print path makes `JTable` omit the selection) and **not** `Robot` (black on non-interactive
+  Windows). **demo** shots (seeded data) on ubuntu/macOS/Windows (Linux under Xvfb); **live** shots
   (real backend install→running→uninstall) on macOS (per-user, no root) + Windows (admin, FFM host),
   non-blocking. Uploaded as artifacts. OpenRC skipped (no display; same Linux look as systemd).
 - **New tests:** `JobSpecsTest` (privilege model, tokenizer, mapping) + `DemoServiceManagerTest`

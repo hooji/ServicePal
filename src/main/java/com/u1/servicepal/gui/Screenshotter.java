@@ -8,20 +8,21 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import javax.imageio.ImageIO;
 import javax.swing.JRootPane;
+import javax.swing.RepaintManager;
 import javax.swing.RootPaneContainer;
 import javax.swing.SwingUtilities;
 
 /**
- * Captures a Swing window's content to a PNG by painting its root pane into a {@link BufferedImage}
- * ({@code printAll}), rather than grabbing the screen with {@code Robot}. Swing widgets — including
- * the native-themed macOS Aqua and Windows look-and-feels — paint themselves into the image, so
- * this works on any platform that merely has a display (Xvfb on headless Linux; the real session on
- * macOS/Windows) without depending on the window being composited on a visible, interactive desktop
- * (a notorious source of black captures on Windows CI).
+ * Captures a Swing window's content to a PNG by painting its root pane into a {@link BufferedImage},
+ * rather than grabbing the screen with {@code Robot}. Swing widgets paint themselves into the image,
+ * so this works on any platform that merely has a display (Xvfb on headless Linux; the real session
+ * on macOS/Windows) without depending on the window being composited on a visible, interactive
+ * desktop (a notorious source of black captures on Windows CI).
  *
- * <p>The trade-off: OS-drawn title bars are not included — the widgets are what we review. On Linux
- * the GUI asks Swing to draw its own title bar (see {@code ServicePalGui}), which <em>is</em>
- * captured.
+ * <p>It uses the {@code paint} path (with double-buffering disabled) rather than {@code printAll}:
+ * {@code printAll} is the <em>print</em> path, and {@link javax.swing.JTable} deliberately omits the
+ * selection highlight when printing — so the selected row would not show. {@code paint} renders the
+ * UI exactly as on screen, selection included.
  */
 final class Screenshotter {
 
@@ -42,7 +43,14 @@ final class Screenshotter {
 		final Graphics2D g = image.createGraphics();
 		g.setColor(root.getBackground());
 		g.fillRect(0, 0, w, h);
-		root.printAll(g);
+		final RepaintManager rm = RepaintManager.currentManager(root);
+		final boolean doubleBuffered = rm.isDoubleBufferingEnabled();
+		rm.setDoubleBufferingEnabled(false);   // paint straight into our image, not an offscreen buffer
+		try {
+			root.paint(g);   // paint path (not printAll) so JTable renders the selection
+		} finally {
+			rm.setDoubleBufferingEnabled(doubleBuffered);
+		}
 		g.dispose();
 		return image;
 	}

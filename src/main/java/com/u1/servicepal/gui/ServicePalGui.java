@@ -7,12 +7,13 @@ import com.u1.servicepal.model.RestartPolicy;
 import com.u1.servicepal.model.RunState;
 import com.u1.servicepal.model.ServiceSpec;
 import com.u1.servicepal.model.ServiceStatus;
+import java.awt.Color;
 import java.nio.file.Path;
 import javax.swing.JDialog;
-import javax.swing.JFrame;
 import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
+import javax.swing.plaf.nimbus.NimbusLookAndFeel;
 
 /**
  * The desktop GUI entry point (reached via {@code java -jar servicepal.jar -ui}). It runs in one of
@@ -57,7 +58,7 @@ public final class ServicePalGui {
 
 	private static void runInteractive(final Args parsed) {
 		SwingUtilities.invokeLater(() -> {
-			installLookAndFeel();
+			installDarkLookAndFeel();
 			final ServiceManager manager;
 			try {
 				manager = parsed.demo
@@ -72,6 +73,7 @@ public final class ServicePalGui {
 			final MainWindow window = new MainWindow(manager);
 			window.setVisible(true);
 			window.controller().refresh();
+			window.controller().focusList();
 		});
 	}
 
@@ -82,11 +84,12 @@ public final class ServicePalGui {
 		final String tag = parsed.tag != null ? parsed.tag : tagFor(platform);
 		final MainWindow[] win = new MainWindow[1];
 		SwingUtilities.invokeAndWait(() -> {
-			installLookAndFeel();
+			installDarkLookAndFeel();
 			win[0] = new MainWindow(DemoData.forPlatform(platform));
 			win[0].setLocation(40, 40);
 			win[0].setVisible(true);
 			win[0].controller().loadSynchronously(null);
+			win[0].controller().focusList();
 		});
 		Screenshotter.capture(win[0], parsed.screenshotDir.resolve("main-" + tag + ".png"));
 
@@ -129,11 +132,12 @@ public final class ServicePalGui {
 			System.out.println("live job state=" + status.state() + " pid=" + status.pid());
 			final MainWindow[] win = new MainWindow[1];
 			SwingUtilities.invokeAndWait(() -> {
-				installLookAndFeel();
+				installDarkLookAndFeel();
 				win[0] = new MainWindow(manager);
 				win[0].setLocation(40, 40);
 				win[0].setVisible(true);
 				win[0].controller().loadSynchronously(spec.id());
+				win[0].controller().focusList();
 			});
 			Screenshotter.capture(win[0], parsed.liveScreenshotDir.resolve("live-" + tag + ".png"));
 			if (status.state() == RunState.RUNNING) {
@@ -169,19 +173,59 @@ public final class ServicePalGui {
 
 	// --- shared ---
 
-	private static void installLookAndFeel() {
-		final String os = System.getProperty("os.name", "").toLowerCase();
-		if (os.contains("linux") || os.contains("unix")) {
-			// Headless CI runs under Xvfb with no window manager; let Swing paint the title bar so
-			// the captured window is framed. macOS/Windows keep their native decorations.
-			JFrame.setDefaultLookAndFeelDecorated(true);
-			JDialog.setDefaultLookAndFeelDecorated(true);
-		}
+	/**
+	 * The GUI defaults to a dark theme on every platform. We theme the JDK's built-in Nimbus
+	 * look-and-feel by overriding its base palette (no third-party dependency) — Nimbus derives most
+	 * component colors from a handful of base keys, so a dark palette propagates consistently.
+	 */
+	private static void installDarkLookAndFeel() {
 		try {
-			UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-		} catch (final Exception e) {
-			// fall back to the default cross-platform look and feel
+			UIManager.setLookAndFeel(new NimbusLookAndFeel());
+			applyDarkPalette();
+		} catch (final Exception primary) {
+			try {
+				UIManager.setLookAndFeel(UIManager.getCrossPlatformLookAndFeelClassName());
+			} catch (final Exception ignored) {
+				// keep the default look-and-feel
+			}
 		}
+	}
+
+	private static void applyDarkPalette() {
+		final Color base = new Color(0x3C, 0x3F, 0x41);        // panels, toolbar, headers
+		final Color control = new Color(0x45, 0x49, 0x4A);     // buttons, combos, scrollbars
+		final Color field = new Color(0x2B, 0x2B, 0x2B);       // text fields, lists, tables
+		final Color textColor = new Color(0xCB, 0xCB, 0xCB);   // primary text
+		final Color disabled = new Color(0x80, 0x84, 0x88);
+		final Color selection = new Color(0x2D, 0x5B, 0xA3);   // selection highlight
+		final Color selectedText = new Color(0xF2, 0xF2, 0xF2);
+		final Color focus = new Color(0x4A, 0x90, 0xD9);
+
+		UIManager.put("control", base);
+		UIManager.put("info", base);
+		UIManager.put("background", base);
+		UIManager.put("nimbusBase", control);
+		UIManager.put("nimbusBlueGrey", control);
+		UIManager.put("nimbusLightBackground", field);
+		UIManager.put("text", textColor);
+		UIManager.put("nimbusDisabledText", disabled);
+		UIManager.put("nimbusFocus", focus);
+		UIManager.put("nimbusSelectionBackground", selection);
+		UIManager.put("nimbusSelection", selection);
+		UIManager.put("nimbusSelectedText", selectedText);
+		UIManager.put("textHighlight", selection);
+		UIManager.put("textHighlightText", selectedText);
+		UIManager.put("nimbusInfoBlue", new Color(0x3D, 0x61, 0x85));
+		UIManager.put("menu", base);
+		UIManager.put("menuText", textColor);
+		UIManager.put("scrollbar", base);
+		UIManager.put("Table.background", field);
+		UIManager.put("Table.alternateRowColor", new Color(0x32, 0x35, 0x37));
+		// Standard component selection keys, so the renderer-driven master list highlights clearly.
+		UIManager.put("Table.selectionBackground", selection);
+		UIManager.put("Table.selectionForeground", selectedText);
+		UIManager.put("List.selectionBackground", selection);
+		UIManager.put("List.selectionForeground", selectedText);
 	}
 
 	private static Platform resolvePlatform(final Args parsed) {

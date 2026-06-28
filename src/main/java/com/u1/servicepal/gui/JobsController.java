@@ -140,6 +140,11 @@ final class JobsController implements JobActions {
 		applyJobs(loadJobs(), idToSelect);
 	}
 
+	/** Move keyboard focus to the master list so the selected row highlights (not dimmed). */
+	void focusList() {
+		list.requestFocusInWindow();
+	}
+
 	private void applyJobs(final List<Job> jobs, final String idToSelect) {
 		list.setJobs(jobs);
 		if (idToSelect != null) {
