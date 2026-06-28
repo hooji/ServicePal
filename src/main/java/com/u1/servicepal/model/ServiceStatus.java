@@ -1,6 +1,7 @@
 package com.u1.servicepal.model;
 
 import com.u1.servicepal.Installation;
+import java.time.Instant;
 
 /**
  * A small, honest snapshot of a service. Weak platforms populate what they can and leave the
@@ -18,6 +19,11 @@ import com.u1.servicepal.Installation;
  * @param pid          process id, or {@code null} if not running / unknown
  * @param lastExitCode last exit code, or {@code null} if unknown
  * @param raw          verbatim native status text, or {@code null}
+ * @param nextRun      the next scheduled run, or {@code null} (unknown / not scheduled). Available
+ *                     on Windows (Task Scheduler), systemd timers (calendar), and OpenRC/cron
+ *                     (computed); launchd does not expose it.
+ * @param lastRun      the last run, or {@code null} (unknown / never run). Available on Windows and
+ *                     systemd timers; cron does not record it and launchd does not expose it.
  */
 public record ServiceStatus(
 		String id,
@@ -29,13 +35,29 @@ public record ServiceStatus(
 		RunState state,
 		Integer pid,
 		Integer lastExitCode,
-		String raw) {
+		String raw,
+		Instant nextRun,
+		Instant lastRun) {
+
+	/** Convenience: a status with no scheduled run times (the common, non-scheduled case). */
+	public ServiceStatus(final String id, final Installation installation, final boolean installed,
+			final boolean enabled, final boolean managed, final boolean adopted, final RunState state,
+			final Integer pid, final Integer lastExitCode, final String raw) {
+		this(id, installation, installed, enabled, managed, adopted, state, pid, lastExitCode, raw,
+				null, null);
+	}
 
 	/** Convenience for the common case of a service we did not adopt ({@code adopted = false}). */
 	public ServiceStatus(final String id, final Installation installation, final boolean installed,
 			final boolean enabled, final boolean managed, final RunState state, final Integer pid,
 			final Integer lastExitCode, final String raw) {
 		this(id, installation, installed, enabled, managed, false, state, pid, lastExitCode, raw);
+	}
+
+	/** This status with scheduled run times attached (used by the scheduling backends). */
+	public ServiceStatus withRunTimes(final Instant next, final Instant last) {
+		return new ServiceStatus(id, installation, installed, enabled, managed, adopted, state, pid,
+				lastExitCode, raw, next, last);
 	}
 
 	/** A status for an id that is not installed. */

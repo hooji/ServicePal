@@ -8,6 +8,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -85,6 +87,43 @@ public final class SchtasksScheduler implements TaskScheduler {
 			}
 		}
 		return false;
+	}
+
+	@Override
+	public TaskRunTimes runTimes(final String name) {
+		// PowerShell's Get-ScheduledTaskInfo exposes NextRunTime/LastRunTime as DateTime; emit them
+		// as round-trip ISO-8601 (UTC) so parsing is locale-independent (unlike schtasks /v text).
+		final String escaped = name.replace("'", "''");
+		final String script = "$ErrorActionPreference='SilentlyContinue';"
+				+ " $i = Get-ScheduledTaskInfo -TaskName '" + escaped + "';"
+				+ " if ($i) {"
+				+ "  if ($i.NextRunTime) { 'NEXT=' + $i.NextRunTime.ToUniversalTime().ToString('o') };"
+				+ "  if ($i.LastRunTime -and $i.LastRunTime.Year -gt 1999) {"
+				+ "   'LAST=' + $i.LastRunTime.ToUniversalTime().ToString('o') } }";
+		final CommandResult res = runner.run(
+				List.of("powershell", "-NoProfile", "-NonInteractive", "-Command", script));
+		if (!res.ok() || res.stdout() == null) {
+			return TaskRunTimes.UNKNOWN;
+		}
+		Instant next = null;
+		Instant last = null;
+		for (final String raw : res.stdout().split("\n")) {
+			final String line = raw.strip();
+			if (line.startsWith("NEXT=")) {
+				next = parseInstant(line.substring("NEXT=".length()));
+			} else if (line.startsWith("LAST=")) {
+				last = parseInstant(line.substring("LAST=".length()));
+			}
+		}
+		return new TaskRunTimes(next, last);
+	}
+
+	private static Instant parseInstant(final String iso) {
+		try {
+			return Instant.parse(iso.strip());
+		} catch (final DateTimeParseException e) {
+			return null;
+		}
 	}
 
 	/** Task Scheduler expects UTF-16; write the XML to a temp file with a UTF-16LE BOM. */

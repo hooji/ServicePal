@@ -24,6 +24,8 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFileAttributeView;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -281,9 +283,14 @@ public final class OpenRcBackend implements Backend {
 		final boolean adopted = managed && reader.isAdopted(script);
 		if (reader.isScheduled(script)) {
 			// A cron job: "enabled" = its cron entry is present. It has no long-running process, so
-			// it reads STOPPED between runs (the GUI relabels a scheduled job "Scheduled").
-			return new ServiceStatus(id, Installation.SYSTEM_WIDE, true, hasCronEntry(id), managed,
-					adopted, RunState.STOPPED, null, null, null);
+			// it reads STOPPED between runs (the GUI relabels a scheduled job "Scheduled"). cron has
+			// no last-run record; next-run is computed from the schedule (only while it's armed).
+			final boolean enabled = hasCronEntry(id);
+			final Schedule schedule = reader.scheduleOf(script);
+			final Instant nextRun = enabled && schedule != null
+					? CronSchedule.nextRun(schedule, Instant.now(), ZoneId.systemDefault()) : null;
+			return new ServiceStatus(id, Installation.SYSTEM_WIDE, true, enabled, managed,
+					adopted, RunState.STOPPED, null, null, null).withRunTimes(nextRun, null);
 		}
 		final boolean enabled = isEnabled(id);
 		final RunState state = runState(rc.status(id).status());

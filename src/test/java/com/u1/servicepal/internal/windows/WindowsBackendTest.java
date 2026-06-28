@@ -297,4 +297,15 @@ class WindowsBackendTest {
 		assertEquals("\"" + JAVAW + "\" --enable-native-access=ALL-UNNAMED -cp \"" + JAR + "\" "
 				+ ServiceHost.class.getName() + " --id " + ID, binPath);
 	}
+
+	@Test
+	void scheduledTaskStatusSurfacesRunTimes() {
+		final java.time.Instant next = java.time.Instant.parse("2026-06-29T03:30:00Z");
+		tasks.runTimes = new TaskRunTimes(next, null);
+		backend.install(scheduled(), false);
+
+		final ServiceStatus s = backend.status(ID, Installation.SYSTEM_WIDE);
+		assertEquals(next, s.nextRun());
+		assertNull(s.lastRun(), "the throwaway task has never run");
+	}
 }

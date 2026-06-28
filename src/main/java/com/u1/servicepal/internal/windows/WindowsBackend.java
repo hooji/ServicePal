@@ -159,8 +159,10 @@ public final class WindowsBackend implements Backend {
 			}
 			final RunState state = taskScheduler.isRunning(id) ? RunState.RUNNING : RunState.STOPPED;
 			final boolean taskManaged = reader.isManaged(sidecar);
+			final TaskRunTimes runTimes = taskScheduler.runTimes(id);
 			return new ServiceStatus(id, Installation.SYSTEM_WIDE, true, reader.autoStart(sidecar),
-					taskManaged, taskManaged && reader.isAdopted(sidecar), state, null, null, null);
+					taskManaged, taskManaged && reader.isAdopted(sidecar), state, null, null, null)
+					.withRunTimes(runTimes.next(), runTimes.last());
 		}
 		final ServiceControlStatus live = scm.queryStatus(id);
 		if (live == null) {

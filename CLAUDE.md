@@ -241,9 +241,12 @@ release-worthy PRs:
    (calendar → fields, interval → `*/n`, fail-fast otherwise); the init script stays the definition
    record (schedule marker) and a tagged crontab entry runs it; caps flipped true; the probe
    round-trips a real busybox crontab entry on Alpine.
-3. **next-run / last-run in `ServiceStatus`** — new fields + per-backend plumbing. Available on Windows
-   (`schtasks /v`) and systemd (`list-timers`); cron can compute next-run only; **launchd exposes
-   neither**, so macOS leaves them null.
+3. ✅ **next-run / last-run in `ServiceStatus`** — DONE. New nullable `nextRun`/`lastRun` `Instant`
+   fields (+ `withRunTimes` wither + convenience ctors). Windows (PowerShell `Get-ScheduledTaskInfo`,
+   ISO) gives both; systemd gives both via `systemctl show` (`NextElapseUSecRealtime` /
+   `LastTriggerUSec` — next only realtime for calendar timers); OpenRC/cron computes next-run
+   (`CronSchedule.nextRun`, no last); **launchd exposes neither**, so macOS leaves them null. The
+   probe checks `nextRun != null` on real systemd + OpenRC.
 4. **GUI scheduling** — a "Keep running" vs "On a schedule" mode toggle, a simple Repeat picker
    (every-N / daily / weekly), the "Scheduled" status relabel + next/last-run display, and an
    install-without-start-now flow. (Scheduling is currently in the GUI's "Deliberately out" list.)

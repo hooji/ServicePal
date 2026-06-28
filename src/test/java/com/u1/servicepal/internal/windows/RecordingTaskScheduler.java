@@ -15,6 +15,7 @@ public final class RecordingTaskScheduler implements TaskScheduler {
 	public String lastAccount;
 	public String lastPassword;
 	public boolean running;
+	public TaskRunTimes runTimes = TaskRunTimes.UNKNOWN;
 
 	@Override
 	public boolean exists(final String name) {
@@ -55,5 +56,10 @@ public final class RecordingTaskScheduler implements TaskScheduler {
 	@Override
 	public boolean isRunning(final String name) {
 		return running;
+	}
+
+	@Override
+	public TaskRunTimes runTimes(final String name) {
+		return runTimes;
 	}
 }

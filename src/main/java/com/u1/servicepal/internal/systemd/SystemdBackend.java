@@ -328,8 +328,11 @@ public final class SystemdBackend implements Backend {
 				|| (timerState.unitFileState() == null && reader.enabledByInstall(timerUnit));
 		// Coarse state from the backing service: RUNNING mid-execution, FAILED on a failed run,
 		// otherwise STOPPED — the timer is armed and waiting (the GUI relabels this "Scheduled").
+		// Next/last run come from the timer (next is realtime only for calendar timers; interval
+		// timers leave it null because systemd tracks those monotonically).
 		return new ServiceStatus(id, installation, true, enabled, managed, adopted,
-				runState(serviceState), serviceState.mainPid(), serviceState.execMainStatus(), null);
+				runState(serviceState), serviceState.mainPid(), serviceState.execMainStatus(), null)
+				.withRunTimes(timerState.nextElapseRealtime(), timerState.lastTrigger());
 	}
 
 	private static RunState runState(final UnitState st) {

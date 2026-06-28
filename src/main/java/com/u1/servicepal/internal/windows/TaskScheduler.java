@@ -34,4 +34,7 @@ public interface TaskScheduler {
 
 	/** Is an instance of the task currently running? */
 	boolean isRunning(String name);
+
+	/** The task's next + last run times (best-effort; {@link TaskRunTimes#UNKNOWN} if unavailable). */
+	TaskRunTimes runTimes(String name);
 }

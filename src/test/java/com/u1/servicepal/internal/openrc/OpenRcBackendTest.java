@@ -250,6 +250,17 @@ class OpenRcBackendTest {
 	}
 
 	@Test
+	void scheduledStatusComputesNextRunWhenArmed() {
+		backend.install(scheduledSpec(), false);
+		assertNull(backend.status(ID, Installation.SYSTEM_WIDE).nextRun(),
+				"not armed yet (no cron entry) -> no next run");
+		backend.enable(ID, Installation.SYSTEM_WIDE);
+		final ServiceStatus s = backend.status(ID, Installation.SYSTEM_WIDE);
+		assertNotNull(s.nextRun(), "a daily schedule always has a next run once armed");
+		assertNull(s.lastRun(), "cron does not record a last run");
+	}
+
+	@Test
 	void switchingADaemonToAScheduleRemovesItFromItsRunlevel() {
 		backend.install(systemSpec(), false);          // a daemon
 		backend.enable(ID, Installation.SYSTEM_WIDE);   // rc-update add

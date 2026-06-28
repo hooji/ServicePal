@@ -147,9 +147,13 @@ public final class SelfTestCli {
 			// real crontab entry. Either failure surfaces here.
 			mgr.installEnableStart(scheduled);
 			final ServiceStatus st = mgr.status(sid);
-			System.out.println("scheduled: installed=" + st.installed() + " enabled=" + st.enabled());
+			System.out.println("scheduled: installed=" + st.installed() + " enabled=" + st.enabled()
+					+ " nextRun=" + st.nextRun());
 			failures += check("scheduled: installed", st.installed());
 			failures += check("scheduled: enabled/armed", st.enabled());
+			// systemd computes NextElapseUSecRealtime for a calendar timer; OpenRC computes it from
+			// the schedule. (launchd exposes neither, but this self-test only runs on Linux.)
+			failures += check("scheduled: has a next run", st.nextRun() != null);
 			final ServiceSpec back = mgr.read(sid);
 			failures += check("scheduled: schedule round-trips",
 					back != null && back.schedule() instanceof CalendarSchedule);

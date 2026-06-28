@@ -3,6 +3,7 @@ package com.u1.servicepal.internal.systemd;
 import com.u1.servicepal.NativeCommandException;
 import com.u1.servicepal.internal.exec.CommandResult;
 import com.u1.servicepal.internal.exec.CommandRunner;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -10,7 +11,8 @@ import java.util.List;
 public final class DefaultSystemctl implements Systemctl {
 
 	private static final String SHOW_PROPS =
-			"LoadState,ActiveState,SubState,UnitFileState,MainPID,ExecMainStatus";
+			"LoadState,ActiveState,SubState,UnitFileState,MainPID,ExecMainStatus,"
+					+ "NextElapseUSecRealtime,LastTriggerUSec";
 
 	private final CommandRunner runner;
 
@@ -68,6 +70,8 @@ public final class DefaultSystemctl implements Systemctl {
 		String fileState = null;
 		Integer pid = null;
 		Integer exit = null;
+		Instant nextElapse = null;
+		Instant lastTrigger = null;
 		for (final String raw : out.split("\n")) {
 			final int eq = raw.indexOf('=');
 			if (eq < 0) {
@@ -82,12 +86,29 @@ public final class DefaultSystemctl implements Systemctl {
 				case "UnitFileState" -> fileState = value;
 				case "MainPID" -> pid = positiveOrNull(value);
 				case "ExecMainStatus" -> exit = parseOrNull(value);
+				case "NextElapseUSecRealtime" -> nextElapse = instantFromUsec(value);
+				case "LastTriggerUSec" -> lastTrigger = instantFromUsec(value);
 				default -> {
 					// ignore other properties
 				}
 			}
 		}
-		return new UnitState(load, active, sub, fileState, pid, exit);
+		return new UnitState(load, active, sub, fileState, pid, exit, nextElapse, lastTrigger);
+	}
+
+	/** A systemd microseconds-since-epoch value to an {@link Instant}; {@code 0}/blank/n-a → null. */
+	private static Instant instantFromUsec(final String value) {
+		final String v = value.strip();
+		if (v.isEmpty() || "0".equals(v)) {
+			return null;   // systemd prints 0 for "not set"
+		}
+		try {
+			final long usec = Long.parseLong(v);
+			return usec <= 0 ? null : Instant.ofEpochSecond(usec / 1_000_000L,
+					(usec % 1_000_000L) * 1_000L);
+		} catch (final NumberFormatException e) {
+			return null;
+		}
 	}
 
 	private List<String> base(final boolean user, final String... args) {

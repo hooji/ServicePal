@@ -69,7 +69,29 @@ class DefaultSystemctlTest {
 		final List<String> cmd = rec.commands.get(0);
 		assertTrue(cmd.contains("show"));
 		assertTrue(cmd.contains("-p"));
-		assertTrue(cmd.contains("LoadState,ActiveState,SubState,UnitFileState,MainPID,ExecMainStatus"));
+		final int p = cmd.indexOf("-p");
+		final String props = cmd.get(p + 1);
+		assertTrue(props.contains("LoadState"));
+		assertTrue(props.contains("ExecMainStatus"));
+		assertTrue(props.contains("NextElapseUSecRealtime"));
+		assertTrue(props.contains("LastTriggerUSec"));
+	}
+
+	@Test
+	void parsesTimerRunTimesFromUsec() {
+		final UnitState st = DefaultSystemctl.parseShow("""
+				NextElapseUSecRealtime=1751168400000000
+				LastTriggerUSec=1751082000000000
+				""");
+		assertEquals(java.time.Instant.ofEpochSecond(1751168400L), st.nextElapseRealtime());
+		assertEquals(java.time.Instant.ofEpochSecond(1751082000L), st.lastTrigger());
+	}
+
+	@Test
+	void treatsZeroUsecAsNoRunTime() {
+		final UnitState st = DefaultSystemctl.parseShow("NextElapseUSecRealtime=0\nLastTriggerUSec=0\n");
+		assertEquals(null, st.nextElapseRealtime());
+		assertEquals(null, st.lastTrigger());
 	}
 
 	@Test

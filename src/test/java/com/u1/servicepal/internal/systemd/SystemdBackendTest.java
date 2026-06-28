@@ -221,6 +221,22 @@ class SystemdBackendTest {
 	}
 
 	@Test
+	void scheduledStatusSurfacesTheTimerRunTimes() {
+		final java.time.Instant next = java.time.Instant.parse("2026-06-29T03:30:00Z");
+		final java.time.Instant last = java.time.Instant.parse("2026-06-28T03:30:00Z");
+		final RecordingSystemctl sc = new RecordingSystemctl((user, unit) -> unit.endsWith(".timer")
+				? new UnitState("loaded", "active", "waiting", "enabled", null, null, next, last)
+				: UnitState.notFound());
+		final SystemdBackend b = new SystemdBackend(sc, Map.of(
+				Installation.PER_USER, userDir, Installation.SYSTEM_WIDE, sysDir));
+		b.install(scheduledSpec(), false);
+
+		final ServiceStatus s = b.status(UNIT_ID, Installation.SYSTEM_WIDE);
+		assertEquals(next, s.nextRun());
+		assertEquals(last, s.lastRun());
+	}
+
+	@Test
 	void switchingADaemonToAScheduleDisablesTheOldDaemon() {
 		backend.install(systemSpec(), false);          // a managed, enabled daemon
 		backend.install(scheduledSpec(), false);       // edit it into a scheduled job

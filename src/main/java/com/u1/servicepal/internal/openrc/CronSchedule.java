@@ -6,7 +6,11 @@ import com.u1.servicepal.model.CalendarSchedule;
 import com.u1.servicepal.model.CalendarSpec;
 import com.u1.servicepal.model.IntervalSchedule;
 import com.u1.servicepal.model.Schedule;
+import java.time.DayOfWeek;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 
 /**
  * Maps a {@link Schedule} to/from the bits OpenRC scheduling needs: a side-band marker stored in the
@@ -82,6 +86,52 @@ final class CronSchedule {
 			return "0 0 * * *";   // once a day
 		}
 		throw inexpressible(interval);
+	}
+
+	/**
+	 * The next time this schedule's cron line fires at or after {@code from}, in {@code zone}, or
+	 * {@code null} if none within a 5-year horizon. cron records no "last run", so only next-run is
+	 * derivable on OpenRC. The schedule is assumed cron-expressible (install already fails fast).
+	 */
+	static Instant nextRun(final Schedule schedule, final Instant from, final ZoneId zone) {
+		final String[] f = toCronLine(schedule).split(" ");
+		ZonedDateTime t = from.atZone(zone).withSecond(0).withNano(0).plusMinutes(1);
+		final ZonedDateTime limit = t.plusYears(5);
+		while (t.isBefore(limit)) {
+			if (fieldMatches(f[0], t.getMinute()) && fieldMatches(f[1], t.getHour())
+					&& fieldMatches(f[2], t.getDayOfMonth()) && fieldMatches(f[3], t.getMonthValue())
+					&& dowMatches(f[4], t.getDayOfWeek())) {
+				return t.toInstant();
+			}
+			t = t.plusMinutes(1);
+		}
+		return null;
+	}
+
+	private static boolean fieldMatches(final String field, final int value) {
+		if (field.equals("*")) {
+			return true;
+		}
+		if (field.startsWith("*/")) {
+			final Integer step = intOrNull(field.substring(2));
+			return step != null && step > 0 && value % step == 0;
+		}
+		final Integer exact = intOrNull(field);
+		return exact != null && exact == value;
+	}
+
+	private static boolean dowMatches(final String field, final DayOfWeek dayOfWeek) {
+		// cron day-of-week is 0-7 with 0 and 7 both Sunday; DayOfWeek is MON=1..SUN=7.
+		final int cronDow = dayOfWeek == DayOfWeek.SUNDAY ? 0 : dayOfWeek.getValue();
+		if (field.equals("*")) {
+			return true;
+		}
+		if (field.startsWith("*/")) {
+			final Integer step = intOrNull(field.substring(2));
+			return step != null && step > 0 && cronDow % step == 0;
+		}
+		final Integer exact = intOrNull(field);
+		return exact != null && (exact == 7 ? 0 : exact) == cronDow;
 	}
 
 	private static UnsupportedFeatureException inexpressible(final IntervalSchedule interval) {

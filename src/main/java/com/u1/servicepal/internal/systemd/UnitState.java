@@ -1,5 +1,7 @@
 package com.u1.servicepal.internal.systemd;
 
+import java.time.Instant;
+
 /**
  * Machine-readable runtime state from {@code systemctl show}. Fields are the raw systemd
  * property values; {@link SystemdBackend} maps them onto our model.
@@ -10,6 +12,9 @@ package com.u1.servicepal.internal.systemd;
  * @param unitFileState {@code enabled} / {@code disabled} / {@code static} / …
  * @param mainPid       main process id, or {@code null} / {@code 0} when not running
  * @param execMainStatus last exit status of the main process, or {@code null}
+ * @param nextElapseRealtime a timer's next elapse (from {@code NextElapseUSecRealtime}), or
+ *                     {@code null} — only calendar timers have a realtime next elapse
+ * @param lastTrigger  a timer's last trigger (from {@code LastTriggerUSec}), or {@code null}
  */
 public record UnitState(
 		String loadState,
@@ -17,7 +22,15 @@ public record UnitState(
 		String subState,
 		String unitFileState,
 		Integer mainPid,
-		Integer execMainStatus) {
+		Integer execMainStatus,
+		Instant nextElapseRealtime,
+		Instant lastTrigger) {
+
+	/** Convenience: state without timer run times (the common, non-timer case). */
+	public UnitState(final String loadState, final String activeState, final String subState,
+			final String unitFileState, final Integer mainPid, final Integer execMainStatus) {
+		this(loadState, activeState, subState, unitFileState, mainPid, execMainStatus, null, null);
+	}
 
 	/** A unit systemd doesn't know about (not installed). */
 	public static UnitState notFound() {
