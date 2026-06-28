@@ -47,6 +47,18 @@ public final class WindowsBackend implements Backend {
 
 	private static final String MANAGED_DESCRIPTION_PREFIX = "[ServicePal] ";
 
+	// ControlService(STOP) is asynchronous (it returns before the service reaches STOPPED), so we
+	// wait for STOPPED before re-acting: before StartServiceW in restart (otherwise the start hits a
+	// still-stopping service, is rejected with ERROR_SERVICE_ALREADY_RUNNING, and leaves the service
+	// stopped) and before DeleteService in uninstall (otherwise the service is only marked for
+	// delete). A residual marked-for-delete window can still make a quick re-create fail, so create
+	// retries on ERROR_SERVICE_MARKED_FOR_DELETE.
+	private static final int STOP_WAIT_ATTEMPTS = 60;
+	private static final long STOP_WAIT_INTERVAL_MS = 100L;
+	private static final int CREATE_ATTEMPTS = 10;
+	private static final long CREATE_RETRY_INTERVAL_MS = 300L;
+	private static final int ERROR_SERVICE_MARKED_FOR_DELETE = 1072;
+
 	private final Scm scm;
 	private final TaskScheduler taskScheduler;
 	private final Path sidecarDir;
@@ -193,8 +205,13 @@ public final class WindowsBackend implements Backend {
 				scm.updateConfig(id, binPath, startType, account, passwordOf(spec),
 						spec.displayName());
 			} else {
-				scm.create(id, spec.displayName(), binPath, startType, account, passwordOf(spec),
-						dependsOn(spec));
+				// A just-uninstalled service can linger briefly in the marked-for-delete state;
+				// retry the create so a quick reinstall of the same id doesn't fail (error 1072).
+				final String displayName = spec.displayName();
+				final String password = passwordOf(spec);
+				final List<String> deps = dependsOn(spec);
+				createWithRetry(() -> scm.create(id, displayName, binPath, startType, account,
+						password, deps));
 			}
 			// The sidecar is the authoritative managed marker; the description marker is a
 			// human-visible hint, so a failure to set it must not fail an otherwise-good install.
@@ -220,6 +237,7 @@ public final class WindowsBackend implements Backend {
 			ignoreFailure(() -> taskScheduler.delete(id));
 		} else {
 			ignoreFailure(() -> scm.stop(id));
+			waitUntilStopped(id);   // let the host exit so DeleteService really removes the service
 			ignoreFailure(() -> scm.delete(id));
 		}
 		deleteSidecar(id);
@@ -269,8 +287,54 @@ public final class WindowsBackend implements Backend {
 
 	@Override
 	public void restart(final String id, final Installation installation) {
-		stop(id, installation);
-		start(id, installation);
+		final Map<String, Object> sidecar = require(id);
+		if (isTask(id, sidecar)) {
+			taskScheduler.end(id);
+			taskScheduler.run(id);
+		} else {
+			scm.stop(id);
+			waitUntilStopped(id);   // ControlService(STOP) is async; start would otherwise race it
+			scm.start(id);
+		}
+	}
+
+	/** Poll until the service reports STOPPED (or is gone), so we don't re-act mid-teardown. */
+	private void waitUntilStopped(final String id) {
+		for (int i = 0; i < STOP_WAIT_ATTEMPTS; i++) {
+			final ServiceControlStatus st;
+			try {
+				st = scm.queryStatus(id);
+			} catch (final RuntimeException e) {
+				return;   // can't observe it — don't block the operation
+			}
+			if (st == null || st.state() == RunState.STOPPED) {
+				return;
+			}
+			sleepQuietly(STOP_WAIT_INTERVAL_MS);
+		}
+	}
+
+	/** Run a create, retrying while the SCM still has the name marked for delete (error 1072). */
+	private void createWithRetry(final Runnable create) {
+		for (int attempt = 1; attempt <= CREATE_ATTEMPTS; attempt++) {
+			try {
+				create.run();
+				return;
+			} catch (final NativeCommandException e) {
+				if (e.exitCode() != ERROR_SERVICE_MARKED_FOR_DELETE || attempt == CREATE_ATTEMPTS) {
+					throw e;
+				}
+				sleepQuietly(CREATE_RETRY_INTERVAL_MS);
+			}
+		}
+	}
+
+	private static void sleepQuietly(final long millis) {
+		try {
+			Thread.sleep(millis);
+		} catch (final InterruptedException e) {
+			Thread.currentThread().interrupt();
+		}
 	}
 
 	// --- helpers ---

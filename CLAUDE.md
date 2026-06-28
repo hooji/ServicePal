@@ -117,6 +117,16 @@ macOS-backend shape.
     makes the race fire; it was green→red→green across the fix). This is a per-user (`gui/<uid>`)
     path — no root needed. The GUI's "needs sudo" hint no longer fires on it (the matcher stopped
     keying on launchctl's generic "re-run as root" advice).
+  - **Windows SCM restart/uninstall races fixed (the Windows analog).** `ControlService(STOP)` is
+    asynchronous, so `restart`'s immediate `StartServiceW` raced the still-stopping service (rejected
+    with `ERROR_SERVICE_ALREADY_RUNNING`, which we ignore) and left it STOPPED, and `uninstall`'s
+    `DeleteService` on a still-running service only *marked* it for delete (so a quick reinstall of
+    the same id could fail with `ERROR_SERVICE_MARKED_FOR_DELETE` 1072). `WindowsBackend.restart`/
+    `uninstall` now wait for STOPPED (poll `QueryServiceStatusEx`) before `StartServiceW`/
+    `DeleteService`, and `create` retries on 1072. Reproduced by `WindowsRestartProbeCli` /
+    `windows-restart-probe.yml` on real windows-2025/2022 runners (red→green). **systemd and OpenRC
+    need no equivalent** — `systemctl`/`rc-service` are synchronous and their `restart` is a single
+    atomic command, so there is no async-teardown window.
   - `ServiceStatus` gained an `installation` field (handy for discovery grouping).
   - Discovery returns a **`Discovery(services, unreadable)`** — root-only/malformed plists are
     **reported by name**, not silently dropped (`ServiceManager.discover()`; `list()` is the

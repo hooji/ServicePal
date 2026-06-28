@@ -1,0 +1,54 @@
+name: Windows restart probe
+
+# A focused probe for the Windows analog of the macOS launchd reload race. The SCM's
+# ControlService(STOP) is asynchronous, so restart's immediate StartServiceW races the still-
+# stopping service (rejected with ERROR_SERVICE_ALREADY_RUNNING, which we ignore) and leaves the
+# service STOPPED; and DeleteService on a still-running service only marks it for delete, so a quick
+# reinstall can fail with ERROR_SERVICE_MARKED_FOR_DELETE. WindowsRestartProbeCli drives the real
+# SCM (a service supervised by the bundled FFM host), SYSTEM_WIDE (the runners are admin).
+#
+# GATING: the probe exits non-zero while the bug is present, so the job is RED now and turns GREEN
+# once the restart/uninstall waits land.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "claude/gui-tool-proposal-**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-restart-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  restart-probe:
+    name: restart probe (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - name: Build jar
+        run: mvn -B -ntp -DskipTests package
+
+      # SYSTEM_WIDE service via the FFM host — needs admin (the runner is) and native access.
+      - name: Reproduce — restart/uninstall a running service
+        run: java --enable-native-access=ALL-UNNAMED -cp target/servicepal.jar com.u1.servicepal.cli.WindowsRestartProbeCli
+
+      # The host runs as a service (no console) and logs to a file; dump it on failure to debug.
+      - name: Host log on failure (debug)
+        if: failure()
+        shell: bash
+        run: cat /c/ProgramData/ServicePal/*.host.log 2>/dev/null || echo "(no host log)"

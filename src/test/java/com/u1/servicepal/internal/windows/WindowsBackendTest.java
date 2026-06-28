@@ -124,6 +124,49 @@ class WindowsBackendTest {
 	}
 
 	@Test
+	void restartWaitsForTheServiceToStopBeforeStarting() {
+		backend.install(daemon(), false);
+		scm.calls.clear();
+		// Simulate the async stop: the service is still stopping for a couple of polls.
+		scm.statusSequence.add(new ServiceControlStatus(RunState.RUNNING, 9, null));
+		scm.statusSequence.add(new ServiceControlStatus(RunState.STOPPING, 9, null));
+		scm.statusSequence.add(new ServiceControlStatus(RunState.STOPPED, null, 0));
+
+		backend.restart(ID, Installation.SYSTEM_WIDE);
+
+		final int stopIdx = scm.calls.indexOf("stop " + ID);
+		final int startIdx = scm.calls.indexOf("start " + ID);
+		assertTrue(stopIdx >= 0 && startIdx >= 0, "restart stops then starts");
+		assertTrue(stopIdx < startIdx, "stop is issued before start");
+		assertTrue(scm.queryCount >= 2, "restart polls for STOPPED before starting");
+	}
+
+	@Test
+	void uninstallWaitsForStoppedBeforeDeleting() {
+		backend.install(daemon(), false);
+		scm.calls.clear();
+		scm.queryCount = 0;
+
+		backend.uninstall(ID, Installation.SYSTEM_WIDE, true);
+
+		final int stopIdx = scm.calls.indexOf("stop " + ID);
+		final int deleteIdx = scm.calls.indexOf("delete " + ID);
+		assertTrue(stopIdx >= 0 && deleteIdx >= 0, "uninstall stops then deletes");
+		assertTrue(stopIdx < deleteIdx, "stop is issued before delete");
+		assertTrue(scm.queryCount >= 1, "uninstall polls for STOPPED before deleting");
+	}
+
+	@Test
+	void installRetriesCreateWhileMarkedForDelete() {
+		scm.createFailuresMarkedForDelete = 2;   // the first two creates fail with error 1072
+
+		backend.install(daemon(), false);
+
+		assertTrue(scm.services.contains(ID),
+				"create eventually succeeds after the marked-for-delete window clears");
+	}
+
+	@Test
 	void refusesToOverwriteUnmanagedService() {
 		scm.services.add(ID);   // a pre-existing service we didn't create (no sidecar)
 		assertThrows(UnmanagedServiceException.class, () -> backend.install(daemon(), false));
