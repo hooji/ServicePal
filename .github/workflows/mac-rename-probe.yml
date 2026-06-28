@@ -1,0 +1,47 @@
+name: macOS rename probe
+
+# A focused probe for the reported macOS bug: renaming a running per-user launchd agent (an upsert)
+# fails with "Bootstrap failed: 5: Input/output error" and then leaves the service booted out, so
+# the follow-up start fails too. RenameProbeCli reproduces the exact GUI Save flow against real
+# launchd, PER_USER (no root — a user-owned agent should be renameable without sudo).
+#
+# This job is GATING: the probe exits non-zero when the bug is present, so the job is RED while the
+# bug exists and turns GREEN once it is fixed. macOS runners only.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "claude/gui-tool-proposal-**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-rename-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rename-probe:
+    name: rename probe (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - name: Build jar
+        run: mvn -B -ntp -DskipTests package
+
+      # PER_USER agent, no sudo. --enable-native-access is harmless on macOS (no FFM here) and keeps
+      # the invocation identical to the other -cp self-tests.
+      - name: Reproduce — rename a running per-user agent
+        run: java --enable-native-access=ALL-UNNAMED -cp target/servicepal.jar com.u1.servicepal.cli.RenameProbeCli
