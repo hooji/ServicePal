@@ -158,16 +158,18 @@ public final class WindowsBackend implements Backend {
 				return null;   // orphaned sidecar; the task is gone
 			}
 			final RunState state = taskScheduler.isRunning(id) ? RunState.RUNNING : RunState.STOPPED;
+			final boolean taskManaged = reader.isManaged(sidecar);
 			return new ServiceStatus(id, Installation.SYSTEM_WIDE, true, reader.autoStart(sidecar),
-					reader.isManaged(sidecar), state, null, null, null);
+					taskManaged, taskManaged && reader.isAdopted(sidecar), state, null, null, null);
 		}
 		final ServiceControlStatus live = scm.queryStatus(id);
 		if (live == null) {
 			return null;   // not installed as a service
 		}
 		final boolean managed = sidecar != null && reader.isManaged(sidecar);
+		final boolean adopted = managed && reader.isAdopted(sidecar);
 		final boolean enabled = managed && reader.autoStart(sidecar);
-		return new ServiceStatus(id, Installation.SYSTEM_WIDE, true, enabled, managed,
+		return new ServiceStatus(id, Installation.SYSTEM_WIDE, true, enabled, managed, adopted,
 				live.state(), live.pid(), live.lastExitCode(), null);
 	}
 
@@ -188,7 +190,14 @@ public final class WindowsBackend implements Backend {
 			throw new UnmanagedServiceException(id);
 		}
 
-		writeSidecar(id, writer.render(spec, scheduled));
+		// Preserve our own provenance; mark an adoption when we install over something foreign.
+		final boolean adopted;
+		if (managed) {
+			adopted = reader.isAdopted(existing);
+		} else {
+			adopted = existing != null || existsLive;
+		}
+		writeSidecar(id, writer.render(spec, scheduled, adopted));
 
 		if (scheduled) {
 			taskScheduler.create(id, taskXmlWriter.render(spec), accountOf(spec.runAs()),

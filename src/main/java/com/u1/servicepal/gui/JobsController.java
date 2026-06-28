@@ -187,36 +187,57 @@ final class JobsController implements JobActions {
 	public void addJob() {
 		final JobForm form = JobDialog.showDialog(owner, "Add Job", JobDialog.blankForm());
 		if (form != null) {
-			save(form);
+			save(form, false);
 		}
 	}
 
 	@Override
 	public void editSelected() {
 		final Job job = list.selectedJob();
-		if (job == null || !job.managed()) {
-			return;   // unmanaged services are view-only
+		if (job == null) {
+			return;
+		}
+		final boolean foreign = !job.managed();
+		if (foreign && !confirmForeignEdit(job)) {
+			return;
 		}
 		final JobForm form = JobDialog.showDialog(owner, "Edit Job", toForm(job));
 		if (form != null) {
-			save(form);
+			save(form, foreign);   // editing a foreign service overwrites it (and adopts it)
 		}
+	}
+
+	/** Warn before rewriting a service we did not create (the edit adopts it into ServicePal). */
+	private boolean confirmForeignEdit(final Job job) {
+		final int ok = JOptionPane.showConfirmDialog(owner,
+				"“" + job.displayName() + "” was not created by ServicePal.\n\n"
+						+ "Editing it rewrites its definition in ServicePal's format — settings "
+						+ "ServicePal doesn't support may be lost — and ServicePal will then manage "
+						+ "it (marked as adopted).\n\nContinue?",
+				"Edit a service ServicePal didn't create", JOptionPane.OK_CANCEL_OPTION,
+				JOptionPane.WARNING_MESSAGE);
+		return ok == JOptionPane.OK_OPTION;
 	}
 
 	@Override
 	public void removeSelected() {
 		final Job job = list.selectedJob();
-		if (job == null || !job.managed()) {
-			return;   // unmanaged services are view-only
+		if (job == null) {
+			return;
 		}
-		final int choice = JOptionPane.showConfirmDialog(owner,
-				"Remove “" + job.displayName() + "”?\nThis stops it and deletes its definition.",
+		final boolean foreign = !job.managed();
+		final String message = foreign
+				? "Remove “" + job.displayName() + "”?\n\nThis service was NOT created by "
+						+ "ServicePal. Removing it stops it and deletes its definition from this "
+						+ "computer."
+				: "Remove “" + job.displayName() + "”?\nThis stops it and deletes its definition.";
+		final int choice = JOptionPane.showConfirmDialog(owner, message,
 				"Remove job", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
 		if (choice != JOptionPane.OK_OPTION) {
 			return;
 		}
 		final String id = job.id();
-		runAsync("remove the job", () -> manager.uninstall(id), null);
+		runAsync("remove the job", () -> manager.uninstall(id, foreign), null);
 	}
 
 	@Override
@@ -246,7 +267,7 @@ final class JobsController implements JobActions {
 		}
 	}
 
-	private void save(final JobForm form) {
+	private void save(final JobForm form, final boolean overwriteUnmanaged) {
 		final ServiceSpec spec = JobSpecs.fromForm(form, manager.capabilities());
 		runAsync("save the job", () -> {
 			// Capture the prior definition + run state so a changed command can be applied to a
@@ -254,7 +275,7 @@ final class JobsController implements JobActions {
 			// manual restart on systemd/OpenRC/Windows (only macOS reloads on install).
 			final ServiceSpec previous = manager.read(spec.id());
 			final boolean wasRunning = manager.status(spec.id()).state() == RunState.RUNNING;
-			applySave(manager, previous, spec, wasRunning, form.autoStart());
+			applySave(manager, previous, spec, wasRunning, form.autoStart(), overwriteUnmanaged);
 		}, spec.id());
 	}
 
@@ -262,11 +283,13 @@ final class JobsController implements JobActions {
 	 * Apply a saved job: upsert the definition, then bring it to the requested state. If it was
 	 * already running and a runtime-affecting field changed, <em>restart</em> it so the new
 	 * definition takes effect on every platform (a cosmetic rename alone does not bounce it).
+	 * {@code overwriteUnmanaged} is true when editing a service we did not create (adopting it).
 	 * Package-visible and Swing-free so it unit-tests directly.
 	 */
 	static void applySave(final ServiceManager mgr, final ServiceSpec previous,
-			final ServiceSpec spec, final boolean wasRunning, final boolean autoStart) {
-		mgr.install(spec);
+			final ServiceSpec spec, final boolean wasRunning, final boolean autoStart,
+			final boolean overwriteUnmanaged) {
+		mgr.install(spec, overwriteUnmanaged);
 		if (!autoStart) {
 			try {
 				mgr.disable(spec.id());
@@ -348,30 +371,38 @@ final class JobsController implements JobActions {
 		if (busy) {
 			return;
 		}
-		// Only jobs ServicePal created are actionable; others are shown read-only (editing or
-		// removing them would need the deliberately-hidden "yes, touch a service I didn't create").
-		final boolean managed = job != null && job.managed();
-		final boolean running = job != null && job.status().state() == RunState.RUNNING;
-		startBtn.setEnabled(managed && !running);
-		stopBtn.setEnabled(managed && running);
-		restartBtn.setEnabled(managed && running);
-		removeBtn.setEnabled(managed);
+		// Every discovered job is actionable. Editing/removing one we did not create takes the
+		// "overwrite unmanaged" path (with a warning + an adoption marker) — see edit/removeSelected.
+		final boolean has = job != null;
+		final boolean running = has && job.status().state() == RunState.RUNNING;
+		startBtn.setEnabled(has && !running);
+		stopBtn.setEnabled(running);
+		restartBtn.setEnabled(running);
+		removeBtn.setEnabled(has);
 	}
 
 	private void updateStatusBar(final List<Job> jobs) {
-		int mine = 0;
+		int created = 0;
+		int adopted = 0;
 		int running = 0;
 		for (final Job job : jobs) {
 			if (job.managed()) {
-				mine++;
+				if (job.adopted()) {
+					adopted++;
+				} else {
+					created++;
+				}
 			}
 			if (job.status().state() == RunState.RUNNING) {
 				running++;
 			}
 		}
-		final int others = jobs.size() - mine;
+		final int others = jobs.size() - created - adopted;
 		final StringBuilder count = new StringBuilder();
-		count.append(mine).append(" created here");
+		count.append(created).append(" created here");
+		if (adopted > 0) {
+			count.append(" · ").append(adopted).append(" adopted");
+		}
 		if (others > 0) {
 			count.append(" · ").append(others).append(" other");
 		}

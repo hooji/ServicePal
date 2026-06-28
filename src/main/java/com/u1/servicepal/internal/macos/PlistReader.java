@@ -23,8 +23,15 @@ import java.util.Set;
  */
 public final class PlistReader {
 
-	/** Marker key written into plists we create, so we can recognize "our" services. */
+	/** Marker key written into plists we manage, so we can recognize "our" services. */
 	public static final String MANAGED_KEY = "com.u1.servicepal.Managed";
+
+	/**
+	 * Side-band marker written when we install over a service we did <em>not</em> create (an
+	 * "adoption"). Present alongside {@link #MANAGED_KEY}; lets discovery report that we manage the
+	 * service without claiming we originated it.
+	 */
+	public static final String ADOPTED_KEY = "com.u1.servicepal.Adopted";
 
 	/**
 	 * Custom key persisting the friendly {@code displayName}. launchd has no native equivalent
@@ -55,6 +62,11 @@ public final class PlistReader {
 
 	public boolean isManaged(final NSDictionary dict) {
 		return dict.containsKey(MANAGED_KEY);
+	}
+
+	/** Whether we manage this service but did not originally create it. */
+	public boolean isAdopted(final NSDictionary dict) {
+		return dict.containsKey(ADOPTED_KEY);
 	}
 
 	public boolean runAtLoad(final NSDictionary dict) {

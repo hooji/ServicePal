@@ -45,9 +45,16 @@ public final class DemoServiceManager implements ServiceManager {
 	/** Seed a pre-existing job, choosing whether it is one ServicePal created ({@code managed}). */
 	public void seed(final ServiceSpec spec, final RunState state, final Integer pid,
 			final boolean enabled, final Integer lastExitCode, final boolean managed) {
+		seed(spec, state, pid, enabled, lastExitCode, managed, false);
+	}
+
+	/** Seed a pre-existing job, also choosing whether we manage it as an {@code adopted} service. */
+	public void seed(final ServiceSpec spec, final RunState state, final Integer pid,
+			final boolean enabled, final Integer lastExitCode, final boolean managed,
+			final boolean adopted) {
 		specs.put(spec.id(), spec);
 		statuses.put(spec.id(), new ServiceStatus(spec.id(), spec.runAs().installation(), true,
-				enabled, managed, state, pid, lastExitCode, null));
+				enabled, managed, adopted, state, pid, lastExitCode, null));
 	}
 
 	@Override
@@ -151,9 +158,11 @@ public final class DemoServiceManager implements ServiceManager {
 		final ServiceStatus prev = statuses.get(spec.id());
 		final RunState state = prev != null ? prev.state() : RunState.STOPPED;
 		final Integer pid = prev != null ? prev.pid() : null;
+		// Model adoption: keep our own provenance, or adopt when installing over something foreign.
+		final boolean adopted = prev != null && (prev.adopted() || !prev.managed());
 		specs.put(spec.id(), spec);
 		statuses.put(spec.id(), new ServiceStatus(spec.id(), spec.runAs().installation(), true,
-				spec.autoStart(), true, state, pid, null, null));
+				spec.autoStart(), true, adopted, state, pid, null, null));
 	}
 
 	@Override
@@ -225,11 +234,11 @@ public final class DemoServiceManager implements ServiceManager {
 	private static ServiceStatus withState(final ServiceStatus s, final RunState state,
 			final Integer pid) {
 		return new ServiceStatus(s.id(), s.installation(), s.installed(), s.enabled(), s.managed(),
-				state, pid, state == RunState.RUNNING ? null : s.lastExitCode(), s.raw());
+				s.adopted(), state, pid, state == RunState.RUNNING ? null : s.lastExitCode(), s.raw());
 	}
 
 	private static ServiceStatus withEnabled(final ServiceStatus s, final boolean enabled) {
 		return new ServiceStatus(s.id(), s.installation(), s.installed(), enabled, s.managed(),
-				s.state(), s.pid(), s.lastExitCode(), s.raw());
+				s.adopted(), s.state(), s.pid(), s.lastExitCode(), s.raw());
 	}
 }

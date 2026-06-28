@@ -117,4 +117,24 @@ class DemoServiceManagerTest {
 		assertFalse(manager.isManaged("com.other.svc"));
 		assertFalse(manager.status("com.other.svc").managed());
 	}
+
+	@Test
+	void freshInstallIsManagedButNotAdopted() {
+		final DemoServiceManager manager = newManager();
+		manager.install(spec(true));
+		assertTrue(manager.status("com.example.demo").managed());
+		assertFalse(manager.status("com.example.demo").adopted());
+	}
+
+	@Test
+	void installingOverAForeignServiceAdoptsIt() {
+		final DemoServiceManager manager = newManager();
+		manager.seed(ServiceSpec.builder().id("com.other.svc").command("/bin/x").build(),
+				RunState.RUNNING, 5, true, null, false);
+		assertFalse(manager.status("com.other.svc").managed());
+
+		manager.install(ServiceSpec.builder().id("com.other.svc").command("/bin/y").build(), true);
+		assertTrue(manager.status("com.other.svc").managed());
+		assertTrue(manager.status("com.other.svc").adopted(), "we manage it but did not create it");
+	}
 }

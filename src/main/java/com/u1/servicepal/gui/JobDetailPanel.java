@@ -126,9 +126,8 @@ final class JobDetailPanel extends JPanel {
 		title.setIconTextGap(10);
 		title.setText(job.displayName());
 
-		final boolean managed = job.managed();
-		managedNote.setText("Not created with ServicePal — shown for reference (view only).");
-		managedNote.setVisible(!managed);
+		managedNote.setText(provenanceNote(job));
+		managedNote.setVisible(managedNote.getText() != null);
 
 		statusValue.setText(statusText(status));
 		statusValue.setForeground(StatusVisuals.color(status.state()));
@@ -138,13 +137,13 @@ final class JobDetailPanel extends JPanel {
 		autoStartValue.setText(status.enabled() ? "Yes" : "No");
 		restartValue.setText(spec == null ? "—" : restartLabel(spec.restart()));
 
-		// Only managed jobs are actionable; unmanaged ones are read-only.
+		// Every job is actionable; editing/removing a foreign one is confirmed by the controller.
 		final boolean running = status.state() == RunState.RUNNING;
-		startBtn.setEnabled(managed && !running);
-		stopBtn.setEnabled(managed && running);
-		restartBtn.setEnabled(managed && running);
-		editBtn.setEnabled(managed);
-		removeBtn.setEnabled(managed);
+		startBtn.setEnabled(!running);
+		stopBtn.setEnabled(running);
+		restartBtn.setEnabled(running);
+		editBtn.setEnabled(true);
+		removeBtn.setEnabled(true);
 		((CardLayout) getLayout()).show(this, DETAIL);
 	}
 
@@ -157,6 +156,17 @@ final class JobDetailPanel extends JPanel {
 			return base + "  (exit " + status.lastExitCode() + ")";
 		}
 		return base;
+	}
+
+	/** A muted provenance line for adopted / foreign jobs, or {@code null} for ones we created. */
+	private static String provenanceNote(final Job job) {
+		if (!job.managed()) {
+			return "Not created with ServicePal — editing it rewrites it in ServicePal's format.";
+		}
+		if (job.adopted()) {
+			return "Adopted by ServicePal — originally created outside ServicePal.";
+		}
+		return null;
 	}
 
 	static String restartLabel(final RestartPolicy policy) {

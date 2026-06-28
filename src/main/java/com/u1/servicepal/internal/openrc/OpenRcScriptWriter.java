@@ -25,11 +25,20 @@ public final class OpenRcScriptWriter {
 	 * @param pidfile  absolute path of the pidfile the supervisor should manage
 	 */
 	public String render(final ServiceSpec spec, final String runlevel, final String pidfile) {
+		return render(spec, runlevel, pidfile, false);
+	}
+
+	/** Render the init script, marking it {@code adopted} when installing over a foreign service. */
+	public String render(final ServiceSpec spec, final String runlevel, final String pidfile,
+			final boolean adopted) {
 		final boolean supervise = useSupervise(spec);
 		final StringBuilder sb = new StringBuilder();
 
 		sb.append("#!/sbin/openrc-run\n");
 		sb.append("# ").append(OpenRcScriptReader.MANAGED_MARKER).append(": 1\n");
+		if (adopted) {
+			sb.append("# ").append(OpenRcScriptReader.ADOPTED_MARKER).append(": 1\n");
+		}
 		sb.append("# ").append(OpenRcScriptReader.RUNLEVEL_MARKER).append(": ")
 				.append(runlevel).append('\n');
 		sb.append('\n');

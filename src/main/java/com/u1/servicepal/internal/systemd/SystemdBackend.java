@@ -127,13 +127,23 @@ public final class SystemdBackend implements Backend {
 		final Path dir = directories.get(installation);
 		final Path file = dir.resolve(unitName(spec.id()));
 
-		if (Files.isRegularFile(file) && !overwriteUnmanaged
-				&& !reader.isManaged(reader.parseFile(file))) {
-			throw new UnmanagedServiceException(spec.id());
+		boolean adopted = false;
+		if (Files.isRegularFile(file)) {
+			Map<String, String> existing = null;
+			try {
+				existing = reader.parseFile(file);
+			} catch (final DefinitionIOException e) {
+				existing = null;   // unreadable/foreign
+			}
+			final boolean existingManaged = existing != null && reader.isManaged(existing);
+			if (!existingManaged && !overwriteUnmanaged) {
+				throw new UnmanagedServiceException(spec.id());
+			}
+			adopted = existingManaged ? reader.isAdopted(existing) : true;
 		}
 		try {
 			Files.createDirectories(dir);
-			Files.writeString(file, writer.render(spec, user(installation)));
+			Files.writeString(file, writer.render(spec, user(installation), adopted));
 		} catch (final IOException e) {
 			throw new DefinitionIOException("failed to write " + file, e);
 		}
@@ -191,11 +201,12 @@ public final class SystemdBackend implements Backend {
 			final Installation installation) {
 		final String id = stem(file);
 		final boolean managed = reader.isManaged(unit);
+		final boolean adopted = managed && reader.isAdopted(unit);
 		final UnitState st = systemctl.show(user(installation), unitName(id));
 		final boolean enabled = "enabled".equals(st.unitFileState())
 				|| "enabled-runtime".equals(st.unitFileState())
 				|| (st.unitFileState() == null && reader.enabledByInstall(unit));
-		return new ServiceStatus(id, installation, true, enabled, managed, runState(st),
+		return new ServiceStatus(id, installation, true, enabled, managed, adopted, runState(st),
 				st.mainPid(), st.execMainStatus(), null);
 	}
 

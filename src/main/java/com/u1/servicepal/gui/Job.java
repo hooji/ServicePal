@@ -17,8 +17,13 @@ public record Job(ServiceSpec spec, ServiceStatus status) {
 		return spec != null ? spec.displayName() : status.id();
 	}
 
-	/** Whether ServicePal created this service (vs. one merely discovered on the machine). */
+	/** Whether ServicePal manages this service (created or adopted), vs. merely discovered. */
 	public boolean managed() {
 		return status.managed();
+	}
+
+	/** Whether we manage it but did not originally create it (we installed over it). */
+	public boolean adopted() {
+		return status.adopted();
 	}
 }

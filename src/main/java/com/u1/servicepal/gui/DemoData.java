@@ -42,6 +42,12 @@ public final class DemoData {
 				null, true, RestartPolicy.ON_FAILURE),
 				RunState.FAILED, null, true, 1);
 
+		// One job ServicePal adopted: it installed over a service it did not originally create.
+		mgr.seed(job(caps, "Mail Indexer", "com.example.mailindex",
+				win ? "C:\\Tools\\mailindex.exe" : "/usr/local/bin/mailindex", "--watch",
+				null, true, RestartPolicy.ON_FAILURE),
+				RunState.RUNNING, 6321, true, null, true, true);
+
 		seedOthers(mgr, platform);
 		return mgr;
 	}

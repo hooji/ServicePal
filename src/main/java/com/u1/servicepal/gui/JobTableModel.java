@@ -6,10 +6,10 @@ import javax.swing.table.AbstractTableModel;
 
 /**
  * Backs the master job list. Each row is either a {@link Header} (a non-selectable section divider)
- * or a {@link Job}. Jobs are split into two sections — the ones ServicePal created, then everything
- * else discovered on the machine — so the two categories read as separate groups. Column 0 carries
- * the row object (a {@link Header} or a {@link Job}); column 1 carries the run state (blank for a
- * header).
+ * or a {@link Job}. Jobs are split into up to three sections — the ones ServicePal created, the ones
+ * it adopted (installed over but did not create), then everything else discovered on the machine.
+ * Column 0 carries the row object (a {@link Header} or a {@link Job}); column 1 carries the run
+ * state (blank for a header).
  */
 final class JobTableModel extends AbstractTableModel {
 
@@ -17,31 +17,37 @@ final class JobTableModel extends AbstractTableModel {
 	record Header(String title, int count) {
 	}
 
-	private static final String MINE = "Created with ServicePal";
+	private static final String CREATED = "Created with ServicePal";
+	private static final String ADOPTED = "Adopted by ServicePal";
 	private static final String OTHERS = "Other background jobs";
 
 	private final List<Object> rows = new ArrayList<>();   // each element is a Header or a Job
 
 	void setJobs(final List<Job> newJobs) {
 		rows.clear();
-		final List<Job> mine = new ArrayList<>();
+		final List<Job> created = new ArrayList<>();
+		final List<Job> adopted = new ArrayList<>();
 		final List<Job> others = new ArrayList<>();
 		for (final Job job : newJobs) {
-			if (job.managed()) {
-				mine.add(job);
-			} else {
+			if (!job.managed()) {
 				others.add(job);
+			} else if (job.adopted()) {
+				adopted.add(job);
+			} else {
+				created.add(job);
 			}
 		}
-		if (!mine.isEmpty()) {
-			rows.add(new Header(MINE, mine.size()));
-			rows.addAll(mine);
-		}
-		if (!others.isEmpty()) {
-			rows.add(new Header(OTHERS, others.size()));
-			rows.addAll(others);
-		}
+		addSection(CREATED, created);
+		addSection(ADOPTED, adopted);
+		addSection(OTHERS, others);
 		fireTableDataChanged();
+	}
+
+	private void addSection(final String title, final List<Job> jobs) {
+		if (!jobs.isEmpty()) {
+			rows.add(new Header(title, jobs.size()));
+			rows.addAll(jobs);
+		}
 	}
 
 	boolean isHeader(final int row) {

@@ -109,6 +109,22 @@ class SystemdBackendTest {
 	}
 
 	@Test
+	void adoptingAForeignUnitMarksItAdopted() throws IOException {
+		Files.writeString(sysDir.resolve(UNIT), "[Service]\nExecStart=/bin/false\n");
+		backend.install(systemSpec(), true);   // adopt (override required)
+		assertTrue(Files.readString(sysDir.resolve(UNIT)).contains("X-ServicePal-Adopted=1"));
+		assertTrue(backend.status(UNIT_ID, Installation.SYSTEM_WIDE).adopted());
+	}
+
+	@Test
+	void freshInstallIsManagedButNotAdopted() {
+		backend.install(systemSpec(), false);
+		final ServiceStatus s = backend.status(UNIT_ID, Installation.SYSTEM_WIDE);
+		assertTrue(s.managed());
+		assertFalse(s.adopted());
+	}
+
+	@Test
 	void readUnknownReturnsNull() {
 		assertNull(backend.read("com.nope", Installation.SYSTEM_WIDE));
 		assertNull(backend.status("com.nope", Installation.SYSTEM_WIDE));

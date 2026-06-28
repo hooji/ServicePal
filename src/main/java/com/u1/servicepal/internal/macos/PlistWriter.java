@@ -24,6 +24,11 @@ import java.util.Map;
 public final class PlistWriter {
 
 	public String render(final ServiceSpec spec) {
+		return render(spec, false);
+	}
+
+	/** Render the plist, marking it {@code adopted} when we are installing over a foreign service. */
+	public String render(final ServiceSpec spec, final boolean adopted) {
 		final NSDictionary root = new NSDictionary();
 		root.put("Label", spec.id());
 		// launchd has no native "friendly name", so persist ours in a side-band key when it
@@ -60,6 +65,9 @@ public final class PlistWriter {
 		putMacOptions(root, spec.mac());
 
 		root.put(PlistReader.MANAGED_KEY, true);
+		if (adopted) {
+			root.put(PlistReader.ADOPTED_KEY, true);
+		}
 		return root.toXMLPropertyList();
 	}
 

@@ -128,6 +128,47 @@ class LaunchdBackendTest {
 	}
 
 	@Test
+	void installingOverAForeignServiceMarksItAdopted() throws IOException {
+		final String id = "com.u1.servicepal.test.sleeper";
+		final Path file = userDir.resolve(id + ".plist");
+		Files.writeString(file, UNMANAGED_BACKUP);   // a foreign plist already at the target
+
+		backend.install(sleepSpec(), true);   // adopt it (override required)
+
+		final String raw = Files.readString(file);
+		assertTrue(raw.contains(PlistReader.MANAGED_KEY), "managed marker written");
+		assertTrue(raw.contains(PlistReader.ADOPTED_KEY), "adoption marker written");
+
+		final ServiceStatus s = backend.status(id, Installation.PER_USER);
+		assertTrue(s.managed());
+		assertTrue(s.adopted(), "we manage it but did not create it");
+	}
+
+	@Test
+	void freshInstallIsCreatedNotAdoptedAndEditingOursKeepsIt() {
+		final String id = "com.u1.servicepal.test.sleeper";
+		backend.install(sleepSpec(), false);   // fresh create
+		assertTrue(backend.status(id, Installation.PER_USER).managed());
+		assertFalse(backend.status(id, Installation.PER_USER).adopted(), "fresh install is not adopted");
+
+		// Re-installing one of ours (an edit) does not flip it to adopted.
+		backend.install(sleepSpec().toBuilder().displayName("Renamed").build(), false);
+		assertFalse(backend.status(id, Installation.PER_USER).adopted(), "editing ours stays created");
+	}
+
+	@Test
+	void adoptionMarkerSurvivesALaterEdit() throws IOException {
+		final String id = "com.u1.servicepal.test.sleeper";
+		Files.writeString(userDir.resolve(id + ".plist"), UNMANAGED_BACKUP);
+		backend.install(sleepSpec(), true);   // adopt
+		assertTrue(backend.status(id, Installation.PER_USER).adopted());
+
+		// A later edit of the now-adopted service keeps the adopted provenance.
+		backend.install(sleepSpec().toBuilder().displayName("Tweaked").build(), false);
+		assertTrue(backend.status(id, Installation.PER_USER).adopted(), "adoption persists across edits");
+	}
+
+	@Test
 	void upsertRoundTripsDisplayNameChangesWithNoStaleKey() {
 		final String id = "com.u1.servicepal.test.named";
 

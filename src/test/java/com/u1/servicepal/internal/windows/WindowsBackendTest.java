@@ -175,6 +175,25 @@ class WindowsBackendTest {
 	}
 
 	@Test
+	void adoptingAForeignServiceMarksItAdopted() throws IOException {
+		scm.services.add(ID);   // a pre-existing service we didn't create (no sidecar)
+		backend.install(daemon(), true);   // adopt (override required)
+
+		assertTrue(Files.readString(sidecarDir.resolve(ID + ".json")).contains(SidecarReader.ADOPTED_KEY));
+		final ServiceStatus s = backend.status(ID, Installation.SYSTEM_WIDE);
+		assertTrue(s.managed());
+		assertTrue(s.adopted());
+	}
+
+	@Test
+	void freshInstallIsManagedButNotAdopted() {
+		backend.install(daemon(), false);
+		final ServiceStatus s = backend.status(ID, Installation.SYSTEM_WIDE);
+		assertTrue(s.managed());
+		assertFalse(s.adopted());
+	}
+
+	@Test
 	void perUserInstallFailsFast() {
 		final ServiceSpec perUser = ServiceSpec.builder()
 				.id(ID).command("C:\\app\\api.exe").asCurrentUser().build();

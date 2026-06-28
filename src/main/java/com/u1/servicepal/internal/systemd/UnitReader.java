@@ -19,8 +19,11 @@ import java.util.Map;
  */
 public final class UnitReader {
 
-	/** Marker key (in {@code [Unit]}) stamped into units we create. */
+	/** Marker key (in {@code [Unit]}) stamped into units we manage. */
 	public static final String MANAGED_KEY = "X-ServicePal-Managed";
+
+	/** Side-band marker (in {@code [Unit]}) set when we install over a service we did not create. */
+	public static final String ADOPTED_KEY = "X-ServicePal-Adopted";
 
 	/** Read a unit file into a flat key→value map (last value wins; section-insensitive). */
 	public Map<String, String> parseFile(final Path file) {
@@ -54,6 +57,11 @@ public final class UnitReader {
 
 	public boolean isManaged(final Map<String, String> unit) {
 		return unit.containsKey(MANAGED_KEY);
+	}
+
+	/** Whether we manage this unit but did not originally create it. */
+	public boolean isAdopted(final Map<String, String> unit) {
+		return unit.containsKey(ADOPTED_KEY);
 	}
 
 	public boolean enabledByInstall(final Map<String, String> unit) {

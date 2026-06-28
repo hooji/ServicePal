@@ -20,9 +20,12 @@ import java.util.Map;
  */
 public final class SidecarReader {
 
-	/** Marker key; its presence means ServicePal created this service. */
+	/** Marker key; its presence means ServicePal manages this service. */
 	public static final String MANAGED_KEY = "servicePalManaged";
 	public static final String MANAGED_VALUE = "com.u1.servicepal";
+
+	/** Side-band marker ({@code "true"}) set when we install over a service we did not create. */
+	public static final String ADOPTED_KEY = "servicePalAdopted";
 
 	/** Which Windows subsystem this id lives in (so by-id ops route correctly). */
 	public static final String KIND_KEY = "kind";
@@ -43,6 +46,11 @@ public final class SidecarReader {
 
 	public boolean isManaged(final Map<String, Object> sidecar) {
 		return MANAGED_VALUE.equals(sidecar.get(MANAGED_KEY));
+	}
+
+	/** Whether we manage this service but did not originally create it. */
+	public boolean isAdopted(final Map<String, Object> sidecar) {
+		return Boolean.parseBoolean(str(sidecar.get(ADOPTED_KEY)));
 	}
 
 	/** {@link #KIND_TASK} for a scheduled job, else {@link #KIND_SERVICE} (the default). */

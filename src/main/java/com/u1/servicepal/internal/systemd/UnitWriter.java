@@ -16,12 +16,20 @@ import java.util.Map;
 public final class UnitWriter {
 
 	public String render(final ServiceSpec spec, final boolean user) {
+		return render(spec, user, false);
+	}
+
+	/** Render the unit, marking it {@code adopted} when we are installing over a foreign service. */
+	public String render(final ServiceSpec spec, final boolean user, final boolean adopted) {
 		final SystemdOptions opts = spec.systemd();
 		final StringBuilder sb = new StringBuilder();
 
 		sb.append("[Unit]\n");
 		sb.append("Description=").append(spec.displayName()).append('\n');
 		sb.append(UnitReader.MANAGED_KEY).append("=1\n");
+		if (adopted) {
+			sb.append(UnitReader.ADOPTED_KEY).append("=1\n");
+		}
 		if (opts != null) {
 			appendList(sb, "After", opts.after());
 			appendList(sb, "Wants", opts.wants());

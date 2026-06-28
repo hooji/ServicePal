@@ -8,30 +8,42 @@ and hides every platform-specific capability the library otherwise offers.
 
 **In:** see your background jobs and whether each is running; add a job (name + command, optional
 working folder); choose *start automatically* and *what to do if it stops*; start / stop / restart;
-remove. The list shows **every service the platform can discover** (`list()`), split into two
-sections: **“Created with ServicePal”** (fully actionable) and **“Other background jobs”**
-(everything else found on the machine, shown **read-only** — see below). On macOS that second group
-is the third-party launchd agents/daemons in `~/Library/LaunchAgents` and `/Library/Launch*`, not
-Apple’s hundreds of services under `/System/Library` (which the backend never touches).
+remove. The list shows **every service the platform can discover** (`list()`), split into up to three
+sections: **“Created with ServicePal”**, **“Adopted by ServicePal”** (services it installed over but
+did not originally create), and **“Other background jobs”** (everything else found on the machine).
+On macOS that last group is the third-party launchd agents/daemons in `~/Library/LaunchAgents` and
+`/Library/Launch*`, not Apple’s hundreds of services under `/System/Library` (which the backend never
+touches).
 
 **Deliberately out (hidden):** schedules (calendar / interval), `RunAs` named-user / system-daemon
 selection, the per-platform option blocks (`.mac()/.systemd()/.windows()/.openrc()`), explicit
 `Installation` choice, env vars and log-file paths (a later "Advanced" disclosure). The UI is
 **identical on all four platforms**; only the native window chrome differs.
 
-## Two categories: yours vs. everything else
+## Three categories, and the adoption marker
 
-`ServiceStatus.managed()` (the embedded marker) classifies each discovered service. The master list
-groups by it — managed jobs first, then the rest — with a non-selectable header row per section (a
-bold, muted label + count and a thin divider line). Header rows are skipped by mouse and keyboard
-selection (`JobListPanel.changeSelection`), so the two groups read as one continuous, navigable list.
+Two side-band markers classify each discovered service (`ServiceStatus.managed()` /
+`ServiceStatus.adopted()`): **created** (we wrote it from scratch — managed, not adopted),
+**adopted** (we installed over a service we did not create — managed *and* adopted), and **foreign**
+(no marker). The master list groups into a section per category, in that order, with a non-selectable
+header row each (a bold, muted label + count and a thin divider line). Header rows are skipped by
+mouse and keyboard selection (`JobListPanel.changeSelection`), so the groups read as one continuous,
+navigable list.
 
-**Other (unmanaged) services are read-only.** Start / Stop / Restart / Edit / Remove are all disabled
-for them and the detail pane shows a muted “Not created with ServicePal — shown for reference (view
-only)” note. The reason is safety: `install`/`uninstall` on a service we didn’t create require the
-deliberately-awkward `yesDoThisToAServiceIDidNotCreate` override, which the GUI never exposes. The
-second group is there for **visibility** — “what else is set up to run on this machine” — not control.
-(On Windows, discovery is sidecar-scoped, so in practice only managed services appear there today.)
+**Every job is actionable**, including foreign ones — start / stop / restart operate by id with no
+special handling. **Editing or removing a foreign service is allowed but confirmed first**, because
+those rewrite or delete a service we did not create:
+
+- *Edit* a foreign job → a warning that it will be rewritten in ServicePal’s format (settings we
+  don’t model may be lost) and **adopted**; on confirm, `install(spec, overwriteUnmanaged=true)`
+  stamps the adoption marker, and the job moves to the “Adopted” section on the next refresh.
+- *Remove* a foreign job → a stronger confirmation; on confirm, `uninstall(id, true)`.
+
+So the awkward `yesDoThisToAServiceIDidNotCreate` override is still the only path that touches a
+service we didn’t create — the GUI just takes it deliberately, behind a warning, instead of hiding it.
+The adoption marker keeps discovery honest: an adopted service is shown as managed **without** ever
+being mislabelled as one we created. (On Windows, discovery is sidecar-scoped, so foreign services
+do not appear there today; adoption still applies if you install over an existing service by id.)
 
 ## The one cross-platform decision: the auto privilege model
 
@@ -107,10 +119,10 @@ All library calls run on a `SwingWorker` (the backends shell out to `launchctl` 
 
 | Action | Library call |
 |--------|--------------|
-| Load list | `list()` (all discovered) + `read(id, installation)` per row; grouped by `ServiceStatus.managed()` |
-| Save (new/edit) | `JobSpecs.fromForm` → `install(spec)`; then `enable` + `start` (or **`restart`** if a running job's runtime fields changed, so the edit applies on every platform — `JobsController.applySave`/`runtimeChanged`), else `disable` |
-| Start / Stop / Restart | `start` / `stop` / `restart(id)` |
-| Remove | `uninstall(id)` (with confirmation) |
+| Load list | `list()` (all discovered) + `read(id, installation)` per row; grouped by `ServiceStatus.managed()` / `adopted()` into created / adopted / other |
+| Save (new/edit) | `JobSpecs.fromForm` → `install(spec, overwriteUnmanaged)` (`overwriteUnmanaged` true only when editing a foreign job — adopts it, after a warning); then `enable` + `start` (or **`restart`** if a running job's runtime fields changed — `JobsController.applySave`/`runtimeChanged`), else `disable` |
+| Start / Stop / Restart | `start` / `stop` / `restart(id)` (any job) |
+| Remove | `uninstall(id, foreign)` (with confirmation; `foreign` passes the unmanaged override) |
 | Badge / privilege model | `platform()` / `capabilities()` |
 
 ## Screenshot harness (CI)
@@ -137,6 +149,6 @@ Screenshots are uploaded as workflow artifacts for download and review.
 
 ## Deferred (future)
 
-An "Advanced" disclosure (env vars, log-file paths); a "show all services" read-only view; richer
-restart/keep-alive options; surfacing schedules. None are needed for the common case this GUI
-targets.
+An "Advanced" disclosure (env vars, log-file paths); richer restart/keep-alive options; surfacing
+schedules. None are needed for the common case this GUI targets. (Showing — and now controlling — all
+discovered services, including ones we adopt, is implemented; see the categories section above.)

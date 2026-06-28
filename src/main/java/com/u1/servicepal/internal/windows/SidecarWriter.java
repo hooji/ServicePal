@@ -21,8 +21,19 @@ public final class SidecarWriter {
 
 	/** @param scheduled true for a Task Scheduler job, false for a service (daemon). */
 	public String render(final ServiceSpec spec, final boolean scheduled) {
+		return render(spec, scheduled, false);
+	}
+
+	/**
+	 * @param scheduled true for a Task Scheduler job, false for a service (daemon)
+	 * @param adopted   true when we are installing over a service we did not create
+	 */
+	public String render(final ServiceSpec spec, final boolean scheduled, final boolean adopted) {
 		final Map<String, Object> o = new LinkedHashMap<>();
 		o.put(SidecarReader.MANAGED_KEY, SidecarReader.MANAGED_VALUE);
+		if (adopted) {
+			o.put(SidecarReader.ADOPTED_KEY, Boolean.toString(true));
+		}
 		o.put(SidecarReader.KIND_KEY, scheduled ? SidecarReader.KIND_TASK : SidecarReader.KIND_SERVICE);
 		o.put("id", spec.id());
 		o.put("displayName", spec.displayName());

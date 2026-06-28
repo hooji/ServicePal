@@ -139,21 +139,26 @@ public final class OpenRcBackend implements Backend {
 		}
 		final Path file = initdDir.resolve(spec.id());
 
-		if (Files.isRegularFile(file) && !overwriteUnmanaged) {
+		boolean adopted = false;
+		if (Files.isRegularFile(file)) {
+			Map<String, String> existing = null;
 			try {
-				if (!reader.isManaged(reader.parseFile(file))) {
-					throw new UnmanagedServiceException(spec.id());
-				}
+				existing = reader.parseFile(file);
 			} catch (final DefinitionIOException e) {
+				existing = null;   // unreadable/foreign
+			}
+			final boolean existingManaged = existing != null && reader.isManaged(existing);
+			if (!existingManaged && !overwriteUnmanaged) {
 				throw new UnmanagedServiceException(spec.id());
 			}
+			adopted = existingManaged ? reader.isAdopted(existing) : true;
 		}
 
 		final String runlevel = runlevelOf(spec);
 		final String pidfile = runDir.resolve(spec.id() + ".pid").toString();
 		try {
 			Files.createDirectories(initdDir);
-			Files.writeString(file, writer.render(spec, runlevel, pidfile));
+			Files.writeString(file, writer.render(spec, runlevel, pidfile, adopted));
 		} catch (final IOException e) {
 			throw new DefinitionIOException("failed to write " + file, e);
 		}
@@ -217,9 +222,10 @@ public final class OpenRcBackend implements Backend {
 	private ServiceStatus buildStatus(final Map<String, String> script, final Path file) {
 		final String id = file.getFileName().toString();
 		final boolean managed = reader.isManaged(script);
+		final boolean adopted = managed && reader.isAdopted(script);
 		final boolean enabled = isEnabled(id);
 		final RunState state = runState(rc.status(id).status());
-		return new ServiceStatus(id, Installation.SYSTEM_WIDE, true, enabled, managed, state,
+		return new ServiceStatus(id, Installation.SYSTEM_WIDE, true, enabled, managed, adopted, state,
 				readPid(id), null, null);
 	}
 

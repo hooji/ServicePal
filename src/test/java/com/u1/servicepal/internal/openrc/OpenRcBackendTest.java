@@ -129,6 +129,22 @@ class OpenRcBackendTest {
 	}
 
 	@Test
+	void adoptingAForeignScriptMarksItAdopted() throws IOException {
+		Files.writeString(initdDir.resolve(ID), "#!/sbin/openrc-run\ncommand=/bin/false\n");
+		backend.install(systemSpec(), true);   // adopt (override required)
+		assertTrue(Files.readString(initdDir.resolve(ID)).contains("# X-ServicePal-Adopted: 1"));
+		assertTrue(backend.status(ID, Installation.SYSTEM_WIDE).adopted());
+	}
+
+	@Test
+	void freshInstallIsManagedButNotAdopted() {
+		backend.install(systemSpec(), false);
+		final ServiceStatus s = backend.status(ID, Installation.SYSTEM_WIDE);
+		assertTrue(s.managed());
+		assertFalse(s.adopted());
+	}
+
+	@Test
 	void readUnknownReturnsNull() {
 		assertNull(backend.read("com.nope", Installation.SYSTEM_WIDE));
 		assertNull(backend.status("com.nope", Installation.SYSTEM_WIDE));

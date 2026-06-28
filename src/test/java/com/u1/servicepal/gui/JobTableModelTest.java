@@ -16,9 +16,13 @@ import org.junit.jupiter.api.Test;
 class JobTableModelTest {
 
 	private static Job job(final String id, final boolean managed) {
+		return job(id, managed, false);
+	}
+
+	private static Job job(final String id, final boolean managed, final boolean adopted) {
 		final ServiceSpec spec = ServiceSpec.builder().id(id).command("/bin/x").build();
 		final ServiceStatus status = new ServiceStatus(id, Installation.PER_USER, true, true,
-				managed, RunState.RUNNING, 1, null, null);
+				managed, adopted, RunState.RUNNING, 1, null, null);
 		return new Job(spec, status);
 	}
 
@@ -68,6 +72,20 @@ class JobTableModelTest {
 		assertEquals(1, model.firstJobRow());
 		assertEquals(1, model.indexOfId("x"));
 		assertEquals(2, model.indexOfId("y"));
+	}
+
+	@Test
+	void adoptedJobsGetTheirOwnMiddleSection() {
+		final JobTableModel model = new JobTableModel();
+		model.setJobs(List.of(job("c", true, false), job("ad", true, true), job("o", false)));
+		// Three sections: Created, Adopted, Other — each with a header then its job.
+		assertEquals(6, model.getRowCount());
+		assertTrue(model.isHeader(0));
+		assertEquals("c", model.jobAt(1).id());
+		assertEquals("Adopted by ServicePal", ((JobTableModel.Header) model.getValueAt(2, 0)).title());
+		assertEquals("ad", model.jobAt(3).id());
+		assertEquals("Other background jobs", ((JobTableModel.Header) model.getValueAt(4, 0)).title());
+		assertEquals("o", model.jobAt(5).id());
 	}
 
 	@Test

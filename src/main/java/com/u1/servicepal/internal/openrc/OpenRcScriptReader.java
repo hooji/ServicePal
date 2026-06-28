@@ -21,8 +21,11 @@ import java.util.Map;
  */
 public final class OpenRcScriptReader {
 
-	/** Marker comment stamped into scripts we create. */
+	/** Marker comment stamped into scripts we manage. */
 	public static final String MANAGED_MARKER = "X-ServicePal-Managed";
+
+	/** Marker comment set when we install over a service we did not create. */
+	public static final String ADOPTED_MARKER = "X-ServicePal-Adopted";
 
 	/** Marker comment recording the runlevel chosen at install (for enable/disable). */
 	public static final String RUNLEVEL_MARKER = "X-ServicePal-Runlevel";
@@ -77,13 +80,19 @@ public final class OpenRcScriptReader {
 			return;
 		}
 		final String key = comment.substring(0, colon).strip();
-		if (key.equals(MANAGED_MARKER) || key.equals(RUNLEVEL_MARKER)) {
+		if (key.equals(MANAGED_MARKER) || key.equals(RUNLEVEL_MARKER)
+				|| key.equals(ADOPTED_MARKER)) {
 			values.put(key, comment.substring(colon + 1).strip());
 		}
 	}
 
 	public boolean isManaged(final Map<String, String> script) {
 		return script.containsKey(MANAGED_MARKER);
+	}
+
+	/** Whether we manage this script but did not originally create it. */
+	public boolean isAdopted(final Map<String, String> script) {
+		return script.containsKey(ADOPTED_MARKER);
 	}
 
 	/** The runlevel recorded in the script, or {@link #DEFAULT_RUNLEVEL} if none. */

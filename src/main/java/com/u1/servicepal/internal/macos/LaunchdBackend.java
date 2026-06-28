@@ -145,19 +145,26 @@ public final class LaunchdBackend implements Backend {
 		final LaunchdDir target = writeTarget(installation);
 		final Path file = target.dir().resolve(spec.id() + ".plist");
 
-		if (Files.isRegularFile(file) && !overwriteUnmanaged) {
+		// Decide provenance: keep our own marker(s) when re-installing one of ours; mark an
+		// adoption when we install over a service we did not create (only allowed with the override).
+		boolean adopted = false;
+		if (Files.isRegularFile(file)) {
+			NSDictionary existing = null;
 			try {
-				if (!reader.isManaged(reader.parseFile(file))) {
-					throw new UnmanagedServiceException(spec.id());
-				}
+				existing = reader.parseFile(file);
 			} catch (final DefinitionIOException e) {
+				existing = null;   // unreadable/foreign
+			}
+			final boolean existingManaged = existing != null && reader.isManaged(existing);
+			if (!existingManaged && !overwriteUnmanaged) {
 				throw new UnmanagedServiceException(spec.id());
 			}
+			adopted = existingManaged ? reader.isAdopted(existing) : true;
 		}
 
 		try {
 			Files.createDirectories(target.dir());
-			Files.writeString(file, writer.render(spec));
+			Files.writeString(file, writer.render(spec, adopted));
 		} catch (final IOException e) {
 			throw new DefinitionIOException("failed to write " + file, e);
 		}
@@ -302,9 +309,10 @@ public final class LaunchdBackend implements Backend {
 		final String label = reader.label(dict);
 		final String id = label != null ? label : stem(file);
 		final boolean managed = reader.isManaged(dict);
+		final boolean adopted = managed && reader.isAdopted(dict);
 		final boolean enabled = reader.runAtLoad(dict);
 		final ServiceRuntime rt = launchctl.runtime(dir.domain(), id);
-		return new ServiceStatus(id, dir.installation(), true, enabled, managed, rt.state(),
+		return new ServiceStatus(id, dir.installation(), true, enabled, managed, adopted, rt.state(),
 				rt.pid(), rt.lastExitCode(), null);
 	}
 

@@ -183,12 +183,14 @@ java -jar servicepal.jar -ui          # launch the GUI (also: --ui, gui)
 java -jar servicepal.jar -ui --demo   # explore with in-memory demo data (no OS changes)
 ```
 
-It lists **every service the platform can discover**, grouped into two sections — the jobs you
-**created with ServicePal** (fully controllable: add/edit, start/stop/restart, remove) and **other
-background jobs** found on the machine (shown read-only, for visibility). For your own jobs you set
-name + command, optional working folder, *start automatically*, and what to do *if it stops*. It
-deliberately hides everything platform-specific (schedules, run-as identity, the
-`.mac()/.systemd()/...` option blocks): the UI is identical on every platform. Where the platform
+It lists **every service the platform can discover**, grouped into sections — the jobs you
+**created with ServicePal**, ones it has **adopted** (installed over but didn't originally create),
+and **other background jobs** found on the machine. Every job is controllable (start/stop/restart,
+add/edit, remove); editing or removing a service ServicePal didn't create is allowed but asks first
+(editing rewrites it in ServicePal's format and adopts it). For your own jobs you set name + command,
+optional working folder, *start automatically*, and what to do *if it stops*. It deliberately hides
+everything platform-specific (schedules, run-as identity, the `.mac()/.systemd()/...` option blocks):
+the UI is identical on every platform. Where the platform
 supports per-user services (macOS, systemd) it installs without admin and starts at login; where it
 does not (Windows, OpenRC) it installs a system-wide service (run the app elevated).
 
