@@ -3,7 +3,9 @@ package com.u1.servicepal.cli;
 import com.u1.servicepal.Platform;
 import com.u1.servicepal.ServiceException;
 import com.u1.servicepal.ServiceManager;
+import com.u1.servicepal.model.CalendarSchedule;
 import com.u1.servicepal.model.RunState;
+import com.u1.servicepal.model.Schedule;
 import com.u1.servicepal.model.ServiceSpec;
 import com.u1.servicepal.model.ServiceStatus;
 
@@ -110,11 +112,57 @@ public final class SelfTestCli {
 			failures++;
 		}
 
+		// systemd: also exercise a real scheduled job (.timer). `start` arms the timer, so a
+		// malformed OnCalendar would make systemd reject the unit and fail here — exactly the kind
+		// of real-systemd bug unit tests can't see.
+		if (platform == Platform.LINUX_SYSTEMD && root) {
+			failures += scheduledSelfTest(mgr);
+		}
+
 		System.out.println(failures == 0 ? "SELFTEST PASS"
 				: "SELFTEST FAIL (" + failures + " failing checks)");
 		if (failures > 0) {
 			System.exit(1);
 		}
+	}
+
+	/** Install → arm → inspect → uninstall a throwaway scheduled job (systemd {@code .timer}). */
+	private static int scheduledSelfTest(final ServiceManager mgr) {
+		final String sid = ID + ".scheduled";
+		int failures = 0;
+		try {
+			if (mgr.isInstalled(sid)) {
+				mgr.uninstall(sid, true);
+			}
+			final ServiceSpec scheduled = ServiceSpec.builder()
+					.id(sid)
+					.command("/bin/true")
+					.asSystemDaemon()
+					.schedule(Schedule.dailyAt(3, 30))
+					.build();
+			// start arms the .timer; systemd rejects (and this throws) if our OnCalendar is bad.
+			mgr.installEnableStart(scheduled);
+			final ServiceStatus st = mgr.status(sid);
+			System.out.println("scheduled: installed=" + st.installed() + " enabled=" + st.enabled());
+			failures += check("scheduled: installed", st.installed());
+			failures += check("scheduled: timer enabled/armed", st.enabled());
+			final ServiceSpec back = mgr.read(sid);
+			failures += check("scheduled: schedule round-trips",
+					back != null && back.schedule() instanceof CalendarSchedule);
+		} catch (final Throwable t) {
+			System.out.println("SCHEDULED SELFTEST ERROR: " + t);
+			t.printStackTrace(System.out);
+			failures++;
+		} finally {
+			try {
+				if (mgr.isInstalled(sid)) {
+					mgr.uninstall(sid, true);
+				}
+			} catch (final Throwable t) {
+				System.out.println("scheduled cleanup warning: " + t);
+			}
+		}
+		return failures;
 	}
 
 	private static int check(final String name, final boolean ok) {
