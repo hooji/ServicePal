@@ -1,6 +1,6 @@
 # ServicePal
 
-A clean, immutable-first Java library for **creating and managing OS-level background
+A clean and simple Java library for **creating and managing background
 services (daemons)** through one uniform API across **macOS, Linux, and Windows**.
 
 Write the service definition once; ServicePal maps it onto each platform's native facilities
