@@ -26,6 +26,12 @@ public final class PlistWriter {
 	public String render(final ServiceSpec spec) {
 		final NSDictionary root = new NSDictionary();
 		root.put("Label", spec.id());
+		// launchd has no native "friendly name", so persist ours in a side-band key when it
+		// differs from the id; PlistReader restores it so displayName round-trips (otherwise a
+		// read() would report the id, e.g. the generated uuid).
+		if (!spec.displayName().equals(spec.id())) {
+			root.put(PlistReader.DISPLAY_NAME_KEY, spec.displayName());
+		}
 		root.put("ProgramArguments", stringArray(spec.command()));
 
 		if (spec.workingDirectory() != null) {

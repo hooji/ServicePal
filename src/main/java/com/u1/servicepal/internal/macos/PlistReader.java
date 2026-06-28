@@ -26,6 +26,14 @@ public final class PlistReader {
 	/** Marker key written into plists we create, so we can recognize "our" services. */
 	public static final String MANAGED_KEY = "com.u1.servicepal.Managed";
 
+	/**
+	 * Custom key persisting the friendly {@code displayName}. launchd has no native equivalent
+	 * (its {@code Label} is the id), so without this the display name would not survive a
+	 * read &rarr; the spec's displayName would fall back to the id. Written only when it differs
+	 * from the id.
+	 */
+	public static final String DISPLAY_NAME_KEY = "com.u1.servicepal.DisplayName";
+
 	/** Parse a plist file into a dictionary. Throws on malformed input. */
 	public NSDictionary parseFile(final Path file) {
 		final NSObject root;
@@ -61,6 +69,11 @@ public final class PlistReader {
 
 		final String label = label(dict);
 		b.id(label != null ? label : fallbackId);
+
+		final String displayName = str(dict.get(DISPLAY_NAME_KEY));
+		if (displayName != null) {
+			b.displayName(displayName);
+		}
 
 		b.command(commandOf(dict));
 

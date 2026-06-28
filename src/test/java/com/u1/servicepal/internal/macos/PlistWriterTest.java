@@ -1,6 +1,7 @@
 package com.u1.servicepal.internal.macos;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -67,6 +68,42 @@ class PlistWriterTest {
 		final CalendarSchedule schedule = assertInstanceOf(CalendarSchedule.class, back.schedule());
 		assertEquals(Integer.valueOf(3), schedule.spec().hour());
 		assertEquals(Integer.valueOf(30), schedule.spec().minute());
+	}
+
+	@Test
+	void roundTripsDisplayNameViaSideBandKey(@TempDir final Path tmp) throws IOException {
+		// launchd has no native friendly name; a user-supplied displayName must survive a read.
+		final ServiceSpec spec = ServiceSpec.builder()
+				.id("com.u1.servicepal.abc123")
+				.displayName("My Backup")
+				.command("/usr/local/bin/backup")
+				.build();
+
+		final String xml = writer.render(spec);
+		assertTrue(xml.contains(PlistReader.DISPLAY_NAME_KEY), "writer persists the display name");
+
+		final Path file = tmp.resolve("svc.plist");
+		Files.writeString(file, xml);
+		final ServiceSpec back = reader.toSpec(reader.parseFile(file), Installation.PER_USER, "x");
+		assertEquals("My Backup", back.displayName(), "displayName round-trips");
+		assertEquals("com.u1.servicepal.abc123", back.id());
+	}
+
+	@Test
+	void omitsDisplayNameKeyWhenItEqualsTheId(@TempDir final Path tmp) throws IOException {
+		// No displayName set → it defaults to the id; the side-band key is then redundant.
+		final ServiceSpec spec = ServiceSpec.builder()
+				.id("com.example.svc")
+				.command("/bin/true")
+				.build();
+
+		final String xml = writer.render(spec);
+		assertFalse(xml.contains(PlistReader.DISPLAY_NAME_KEY), "no redundant display-name key");
+
+		final Path file = tmp.resolve("svc.plist");
+		Files.writeString(file, xml);
+		final ServiceSpec back = reader.toSpec(reader.parseFile(file), Installation.PER_USER, "x");
+		assertEquals("com.example.svc", back.displayName());
 	}
 
 	@Test
