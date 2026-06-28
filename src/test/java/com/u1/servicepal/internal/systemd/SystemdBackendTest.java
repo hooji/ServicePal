@@ -2,19 +2,24 @@ package com.u1.servicepal.internal.systemd;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.u1.servicepal.Installation;
 import com.u1.servicepal.UnmanagedServiceException;
+import com.u1.servicepal.model.CalendarSchedule;
 import com.u1.servicepal.model.Discovery;
 import com.u1.servicepal.model.RunState;
+import com.u1.servicepal.model.Schedule;
 import com.u1.servicepal.model.ServiceSpec;
 import com.u1.servicepal.model.ServiceStatus;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -128,5 +133,99 @@ class SystemdBackendTest {
 	void readUnknownReturnsNull() {
 		assertNull(backend.read("com.nope", Installation.SYSTEM_WIDE));
 		assertNull(backend.status("com.nope", Installation.SYSTEM_WIDE));
+	}
+
+	// --- scheduled jobs (.timer + oneshot .service) ---
+
+	private static ServiceSpec scheduledSpec() {
+		return ServiceSpec.builder()
+				.id(UNIT_ID)
+				.command("/usr/bin/backup", "--nightly")
+				.asSystemDaemon()
+				.schedule(Schedule.dailyAt(3, 30))
+				.build();
+	}
+
+	@Test
+	void capabilitiesNowAllowScheduling() {
+		assertTrue(backend.capabilities().calendarSchedule());
+		assertTrue(backend.capabilities().intervalSchedule());
+	}
+
+	@Test
+	void installScheduledWritesTimerAndOneshotService() throws IOException {
+		backend.install(scheduledSpec(), false);
+
+		final String svc = Files.readString(sysDir.resolve(UNIT));
+		assertTrue(svc.contains("Type=oneshot"));
+		assertFalse(svc.contains("[Install]"), "the oneshot service is triggered by the timer");
+
+		final String timer = Files.readString(sysDir.resolve(UNIT_ID + ".timer"));
+		assertTrue(timer.contains("OnCalendar=*-*-* 03:30:00"));
+		assertTrue(timer.contains("Persistent=true"));
+		assertTrue(timer.contains("WantedBy=timers.target"));
+		assertTrue(timer.contains("X-ServicePal-Schedule=calendar:30,3,,,"));
+		assertTrue(systemctl.calls.contains("daemon-reload system"));
+	}
+
+	@Test
+	void intervalScheduleRendersARepeatingTimer() throws IOException {
+		backend.install(scheduledSpec().toBuilder().schedule(Schedule.everyMinutes(15)).build(), false);
+		final String timer = Files.readString(sysDir.resolve(UNIT_ID + ".timer"));
+		assertTrue(timer.contains("OnUnitActiveSec=900s"));
+		assertTrue(timer.contains("X-ServicePal-Schedule=interval:900"));
+	}
+
+	@Test
+	void scheduledLifecycleTargetsTheTimer() {
+		backend.install(scheduledSpec(), false);
+		backend.enable(UNIT_ID, Installation.SYSTEM_WIDE);
+		backend.start(UNIT_ID, Installation.SYSTEM_WIDE);
+		backend.stop(UNIT_ID, Installation.SYSTEM_WIDE);
+		backend.disable(UNIT_ID, Installation.SYSTEM_WIDE);
+
+		final String timer = UNIT_ID + ".timer";
+		assertTrue(systemctl.calls.contains("enable system " + timer));
+		assertTrue(systemctl.calls.contains("start system " + timer));
+		assertTrue(systemctl.calls.contains("stop system " + timer));
+		assertTrue(systemctl.calls.contains("disable system " + timer));
+	}
+
+	@Test
+	void discoverListsAScheduledJobOnceViaItsTimer() {
+		backend.install(scheduledSpec(), false);
+		final Discovery d = backend.discover(Installation.SYSTEM_WIDE);
+		assertEquals(1, d.services().size(), "the backing oneshot service is not listed separately");
+		assertEquals(UNIT_ID, d.services().get(0).id());
+	}
+
+	@Test
+	void readReconstructsTheScheduleAndCommand() {
+		backend.install(scheduledSpec(), false);
+		final ServiceSpec back = backend.read(UNIT_ID, Installation.SYSTEM_WIDE);
+		assertNotNull(back);
+		final CalendarSchedule schedule = assertInstanceOf(CalendarSchedule.class, back.schedule());
+		assertEquals(Integer.valueOf(3), schedule.spec().hour());
+		assertEquals(Integer.valueOf(30), schedule.spec().minute());
+		assertEquals(List.of("/usr/bin/backup", "--nightly"), back.command());
+	}
+
+	@Test
+	void uninstallScheduledRemovesBothUnits() {
+		backend.install(scheduledSpec(), false);
+		backend.uninstall(UNIT_ID, Installation.SYSTEM_WIDE, false);
+		assertFalse(Files.exists(sysDir.resolve(UNIT)));
+		assertFalse(Files.exists(sysDir.resolve(UNIT_ID + ".timer")));
+		assertTrue(systemctl.calls.contains("stop system " + UNIT_ID + ".timer"));
+		assertTrue(systemctl.calls.contains("disable system " + UNIT_ID + ".timer"));
+	}
+
+	@Test
+	void switchingADaemonToAScheduleDisablesTheOldDaemon() {
+		backend.install(systemSpec(), false);          // a managed, enabled daemon
+		backend.install(scheduledSpec(), false);       // edit it into a scheduled job
+		assertTrue(Files.exists(sysDir.resolve(UNIT_ID + ".timer")));
+		assertTrue(systemctl.calls.contains("disable system " + UNIT),
+				"the old daemon's enable symlink is removed so it stops auto-starting");
 	}
 }

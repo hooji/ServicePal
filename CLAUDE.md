@@ -66,8 +66,13 @@ macOS-backend shape.
   `X-ServicePal-Managed`), drives `systemctl` (`daemon-reload`/`enable`/`disable`/`start`/
   `stop`/`restart`, `show` for structured status). PER_USER → `systemctl --user` +
   `~/.config/systemd/user`; SYSTEM_WIDE → system manager + `/etc/systemd/system`. Full
-  discovery + mutation. **Services only for now — `.timer` (calendar/interval) is deferred**,
-  so systemd reports `calendar`/`interval` capabilities as false (scheduled jobs fail fast).
+  discovery + mutation. **Scheduling done — a scheduled job (non-null `Schedule`) becomes a
+  `.timer` + a oneshot `.service` pair** (`UnitWriter.renderTimer`/`renderScheduledService`):
+  calendar → `OnCalendar=`, interval → `OnBootSec`/`OnUnitActiveSec`; the schedule round-trips via a
+  side-band `X-ServicePal-Schedule` marker in the `.timer` (so we never re-parse `OnCalendar`). By-id
+  ops target the `.timer`; discovery surfaces the job once (via the timer, hiding the backing
+  service); `calendar`/`interval` capabilities are now true. The probe `SelfTestCli` arms a real
+  `.timer` on the ubuntu runner (a bad `OnCalendar` would fail `systemctl start`).
 - **Done — Linux/OpenRC backend** (`internal/openrc`): writes init scripts to `/etc/init.d`
   (POSIX shell sourcing `openrc-run`, marker comment `# X-ServicePal-Managed`), drives
   `rc-service` (start/stop/restart/status) + `rc-update` (add/del for enable/disable). Full
@@ -98,10 +103,12 @@ macOS-backend shape.
   ubuntu/macos/windows (JDK 25); the probe runs a real `systemctl` lifecycle (sudo) on the ubuntu
   runner, a real launchd lifecycle on macOS, a real `rc-service` lifecycle in an Alpine/OpenRC
   container, and a real Windows-service lifecycle (the FFM host) on the windows runner.
-- **Not yet (refinements, not platforms):** systemd `.timer` scheduling; per-user Windows
-  services (Windows is SYSTEM_WIDE-only in v1); machine-wide enumeration of third-party Windows
-  services (`list()` is sidecar-scoped there); the lower-JDK Mac/Linux-only build. `UnimplementedBackend`
-  is now unused (all four platforms have real backends) but kept as a clear "not implemented" signal.
+- **Not yet (refinements, not platforms):** OpenRC scheduling (no native scheduler — a cron fallback
+  is planned so scheduling reaches all four platforms; OpenRC still reports `calendar`/`interval`
+  false); GUI scheduling UI; next-run/last-run in `ServiceStatus`; per-user Windows services (Windows
+  is SYSTEM_WIDE-only in v1); machine-wide enumeration of third-party Windows services (`list()` is
+  sidecar-scoped there); the lower-JDK Mac/Linux-only build. `UnimplementedBackend` is now unused (all
+  four platforms have real backends) but kept as a clear "not implemented" signal.
 - **Refinements made during impl:**
   - **macOS `displayName` round-trips** via a side-band plist key
     (`com.u1.servicepal.DisplayName`, written only when it differs from the id) because launchd has
@@ -220,16 +227,25 @@ dispatcher), so the jar's role as the Windows "execution helper" is preserved.
 - `docs/ROADMAP.md` — deferred items (WinSW alt host, lower-JDK Mac/Linux build, SysV/runit,
   cron fallback, D-Bus).
 
-## ▶ Next session: refinements (all four backends are done)
+## ▶ Cross-platform scheduling (in progress)
 
-No platforms remain. The highest-value follow-ups, roughly in order:
-1. **systemd `.timer` scheduling** — the one capability gap on a "full" platform (systemd
-   currently reports `calendar`/`interval` false). Mirror the Windows Task-Scheduler routing.
-2. **Windows polish** — per-user services (`Tmpl_<LUID>` or a logon Task; would flip
-   `perUserInstall` true), machine-wide `EnumServicesStatusExW` discovery (today `list()` is
-   sidecar-scoped), delayed-auto start, recovery actions via `ChangeServiceConfig2`.
-3. **Lower-JDK Mac/Linux-only build** (roadmap) — the JDK 25 floor is only for the Windows FFM
-   paths; the other backends are JDK-21-compatible.
+Owner approved adding scheduling to **all four platforms** + showing next-run/last-run. Sequenced as
+release-worthy PRs:
+1. ✅ **systemd `.timer`** — DONE (this PR). `.timer` + oneshot `.service` pair; `calendar`/`interval`
+   caps flipped true; real `.timer` armed by the probe.
+2. **OpenRC scheduling via a cron fallback** — OpenRC has no native scheduler. Add a `Cron` seam (the
+   analog of `RcService`/`Scm`) that writes a crontab/`cron.d` entry; flip OpenRC's caps. Note: cron
+   handles calendar schedules cleanly but intervals only for sub-60-minute divisors (`*/n`).
+3. **next-run / last-run in `ServiceStatus`** — new fields + per-backend plumbing. Available on Windows
+   (`schtasks /v`) and systemd (`list-timers`); cron can compute next-run only; **launchd exposes
+   neither**, so macOS leaves them null.
+4. **GUI scheduling** — a "Keep running" vs "On a schedule" mode toggle, a simple Repeat picker
+   (every-N / daily / weekly), the "Scheduled" status relabel + next/last-run display, and an
+   install-without-start-now flow. (Scheduling is currently in the GUI's "Deliberately out" list.)
+
+Other deferred refinements: **Windows polish** (per-user services, machine-wide `EnumServicesStatusExW`
+discovery, delayed-auto start, recovery actions); **lower-JDK Mac/Linux-only build** (the JDK 25 floor
+is only for the Windows FFM paths).
 
 When working on Windows FFM: it **compiles on any JDK 25 toolchain** (the `java.lang.foreign`
 API is platform-independent; `libraryLookup("Advapi32.dll")` only fails at runtime off-Windows,

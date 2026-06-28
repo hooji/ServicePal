@@ -2,12 +2,15 @@ package com.u1.servicepal.internal.systemd;
 
 import com.u1.servicepal.DefinitionIOException;
 import com.u1.servicepal.Installation;
+import com.u1.servicepal.model.CalendarSpec;
 import com.u1.servicepal.model.RestartPolicy;
 import com.u1.servicepal.model.RunAs;
+import com.u1.servicepal.model.Schedule;
 import com.u1.servicepal.model.ServiceSpec;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -24,6 +27,14 @@ public final class UnitReader {
 
 	/** Side-band marker (in {@code [Unit]}) set when we install over a service we did not create. */
 	public static final String ADOPTED_KEY = "X-ServicePal-Adopted";
+
+	/**
+	 * Side-band marker (in a {@code .timer}'s {@code [Unit]}) recording the {@link Schedule} in a
+	 * form we can parse straight back — {@code interval:<seconds>} or
+	 * {@code calendar:<min>,<hour>,<dom>,<month>,<dow>} (empty field = wildcard). Avoids having to
+	 * re-parse arbitrary {@code OnCalendar} syntax.
+	 */
+	public static final String SCHEDULE_KEY = "X-ServicePal-Schedule";
 
 	/** Read a unit file into a flat key→value map (last value wins; section-insensitive). */
 	public Map<String, String> parseFile(final Path file) {
@@ -62,6 +73,41 @@ public final class UnitReader {
 	/** Whether we manage this unit but did not originally create it. */
 	public boolean isAdopted(final Map<String, String> unit) {
 		return unit.containsKey(ADOPTED_KEY);
+	}
+
+	/** The {@link Schedule} recorded in a {@code .timer}'s side-band marker, or {@code null}. */
+	public Schedule scheduleOf(final Map<String, String> unit) {
+		final String marker = unit.get(SCHEDULE_KEY);
+		if (marker == null) {
+			return null;
+		}
+		if (marker.startsWith("interval:")) {
+			final Integer seconds = parseIntOrNull(marker.substring("interval:".length()));
+			return seconds == null || seconds <= 0 ? null
+					: Schedule.every(Duration.ofSeconds(seconds));
+		}
+		if (marker.startsWith("calendar:")) {
+			final String[] parts = marker.substring("calendar:".length()).split(",", -1);
+			if (parts.length != 5) {
+				return null;
+			}
+			return Schedule.calendar(new CalendarSpec(parseIntOrNull(parts[0]),
+					parseIntOrNull(parts[1]), parseIntOrNull(parts[2]), parseIntOrNull(parts[3]),
+					parseIntOrNull(parts[4])));
+		}
+		return null;
+	}
+
+	private static Integer parseIntOrNull(final String raw) {
+		final String s = raw.strip();
+		if (s.isEmpty()) {
+			return null;
+		}
+		try {
+			return Integer.valueOf(s);
+		} catch (final NumberFormatException e) {
+			return null;
+		}
 	}
 
 	public boolean enabledByInstall(final Map<String, String> unit) {
