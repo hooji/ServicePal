@@ -29,20 +29,26 @@ the platform's `capabilities()`:
 This keeps the UI uniform and avoids privilege prompts on the platforms that don't need them. When a
 privileged op fails, the controller shows a friendly "run as administrator / with sudo" hint.
 
-## Toolkit: Swing with the native look-and-feel
+## Toolkit: Swing, with FlatLaf on macOS
 
-Swing is bundled in the JDK (zero new runtime dependencies — the library still only ships
-`dd-plist`), runs on the JDK 25 baseline everywhere, and compiles into the existing shaded jar.
-(JavaFX was rejected: heavier, platform-native dependencies, awkward headless CI.)
+Swing is bundled in the JDK, runs on the JDK 25 baseline everywhere, and compiles into the existing
+shaded jar. (JavaFX was rejected: heavier, platform-native dependencies, awkward headless CI.)
 
-The GUI uses each platform's **native look-and-feel** (`UIManager.getSystemLookAndFeelClassName()`):
-Aqua on macOS, the Windows look on Windows, GTK/Metal on Linux. On macOS it also sets
-`apple.awt.application.appearance=system` so the window follows the OS light/dark setting (Aqua
-otherwise forces light). This keeps the window at home on each OS without adding a third-party
-look-and-feel (e.g. FlatLaf), which would break the project's no-new-dependency rule. The master
-list's cell renderers set only their text, icon, and (for the state column) the state color, leaving
-the L&F to paint the row and its selection highlight. Per-platform differences are the native widget
-styling itself; the layout is identical everywhere.
+The look-and-feel is chosen per platform in `ServicePalGui.installLookAndFeel`:
+
+- **macOS → [FlatLaf](https://www.formdev.com/flatlaf/)**, following the system light/dark setting:
+  `systemIsDark()` reads `defaults read -g AppleInterfaceStyle` (`"Dark"` in dark mode, unset in
+  light) and installs `FlatDarkLaf` or `FlatLightLaf` accordingly. FlatLaf gives a clean, modern
+  dark theme that the stock Aqua L&F can't (Aqua only follows the OS appearance, and its dark
+  styling of Swing tables/lists is weak).
+- **Windows / Linux → the native L&F** (`UIManager.getSystemLookAndFeelClassName()`): the Windows
+  look on Windows, GTK/Metal on Linux.
+
+FlatLaf (`com.formdev:flatlaf`) is the GUI's one third-party dependency — it is shaded into the jar
+and only loaded on macOS at runtime; the library core still needs only `dd-plist`, and the Windows
+service host never touches Swing. The master list's cell renderers set only their text, icon, and
+(for the state column) the state color, leaving the L&F to paint the row and its selection
+highlight.
 
 ## Entry point — `-ui`, opt-in by design
 

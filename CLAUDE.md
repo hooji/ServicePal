@@ -173,12 +173,13 @@ dispatcher), so the jar's role as the Windows "execution helper" is preserved.
   that `restart` is reliable on all four platforms.)
 - **Depends only on the `ServiceManager` interface**, so a `DemoServiceManager` (in-memory fake) +
   `DemoData` drive demos/screenshots/tests. Library calls run off the EDT on `SwingWorker`s.
-- **Native look-and-feel** on every platform: `UIManager.getSystemLookAndFeelClassName()`
-  (`ServicePalGui.installLookAndFeel`) — Aqua on macOS, the Windows L&F on Windows, GTK/Metal on
-  Linux; no third-party L&F (e.g. FlatLaf), keeping the no-new-dependency rule. macOS also sets
-  `apple.awt.application.appearance=system` so the window follows the OS light/dark setting (Aqua
-  otherwise forces light). The master list's renderers set only text/icon/state-color and let the
-  L&F paint the row + selection highlight.
+- **Look-and-feel** (`ServicePalGui.installLookAndFeel`): **FlatLaf on macOS**, following the system
+  light/dark setting (`FlatLightLaf` / `FlatDarkLaf`; `systemIsDark()` reads `defaults read -g
+  AppleInterfaceStyle`). **Native L&F on Windows and Linux** (`getSystemLookAndFeelClassName()`).
+  FlatLaf (`com.formdev:flatlaf`, shaded into the jar) is the GUI's one third-party dependency and
+  is only loaded on macOS at runtime — the library core still needs only dd-plist, and the Windows
+  service host never touches Swing. The master list's renderers set only text/icon/state-color and
+  let the L&F paint the row + selection highlight.
 - **Screenshots in CI** (`.github/workflows/gui-screenshots.yml`): captures the window by painting
   its Swing root pane into a PNG via the **`paint`** path (double-buffering off), **not** `printAll`
   (the print path makes `JTable` omit the selection) and **not** `Robot` (black on non-interactive
@@ -187,8 +188,10 @@ dispatcher), so the jar's role as the Windows "execution helper" is preserved.
   non-blocking. Uploaded as artifacts. OpenRC skipped (no display; same Linux look as systemd).
 - **New tests:** `JobSpecsTest` (privilege model, tokenizer, mapping) + `DemoServiceManagerTest`
   (lifecycle) — headless, platform-independent. Design: `docs/design/gui-design.md`.
-- **No new runtime deps** (Swing is in the JDK); the build/JDK-25 baseline is unchanged. The GUI is
-  JDK-21-source-compatible but lives in the same module, which targets release 25.
+- **One new runtime dep** — **FlatLaf** (`com.formdev:flatlaf`), the GUI's macOS look-and-feel,
+  shaded into the jar (only loaded on macOS). Swing itself is in the JDK; the build/JDK-25 baseline
+  is unchanged. The GUI is JDK-21-source-compatible but lives in the same module, which targets
+  release 25.
 
 ## Design docs (step 2)
 
