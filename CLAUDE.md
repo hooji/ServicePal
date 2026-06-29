@@ -98,20 +98,28 @@ macOS-backend shape.
   (host reads it), the managed marker, and the service-vs-task router; hand-rolled `Json` codec (no
   new dep — the Windows analog of dd-plist, confined). **SYSTEM_WIDE-only** in v1
   (`perUserInstall` false → fail fast); `calendar`/`interval` true (Task Scheduler);
-  `structuredStatus` true (`QueryServiceStatusEx`). Discovery is sidecar-scoped (machine-wide
-  enumeration of third-party services is deferred). Seams = `Scm` + `TaskScheduler` (stubs in
-  tests). **FFM compiles everywhere; only `createDefault()`/calls run on Windows** — so the rest
+  `structuredStatus` true (`QueryServiceStatusEx`). **Discovery is machine-wide**: managed
+  services/tasks (from their sidecars) **plus** every other Win32 service via `EnumServicesStatusExW`
+  (`FfmScm.enumerate` → `Scm.enumerate` returning `ScmService(name, status)`), surfaced as foreign and
+  deduped against the sidecars by case-insensitive name — so the GUI's "Other background jobs" section
+  populates on Windows too. The FFM struct parse (`parseEnumeration`, relativized `lpServiceName`
+  pointer-follow, no reinterpret) is unit-tested off-Windows (`FfmScmParseTest`); the real
+  `EnumServicesStatusExW` call is gated by `SelfTestCli` on the windows runner. Seams = `Scm` +
+  `TaskScheduler` (stubs in tests). **FFM compiles everywhere; only `createDefault()`/calls run on Windows** — so the rest
   unit-tests off-Windows. Validated on the `windows-latest` runner via the probe `SelfTestCli`
   (real install→start→`RUNNING`+pid→uninstall; the host log confirmed the SCM round-trip).
-- **89 unit tests**, all platform-independent (stubbed `CommandRunner`/`Launchctl`/`Systemctl`/
-  `RcService`/`Scm`/`TaskScheduler`, temp-dir definitions). GitHub Actions CI on
+- **214 unit tests**, all platform-independent (stubbed `CommandRunner`/`Launchctl`/`Systemctl`/
+  `RcService`/`Scm`/`TaskScheduler`, temp-dir definitions; FFM struct parses tested via hand-built
+  buffers). GitHub Actions CI on
   ubuntu/macos/windows (JDK 25); the probe runs a real `systemctl` lifecycle (sudo) on the ubuntu
   runner, a real launchd lifecycle on macOS, a real `rc-service` lifecycle in an Alpine/OpenRC
   container, and a real Windows-service lifecycle (the FFM host) on the windows runner.
 - **Not yet (refinements, not platforms):** per-user Windows services (Windows is SYSTEM_WIDE-only in
-  v1); machine-wide enumeration of third-party Windows services (`list()` is sidecar-scoped there); the
-  lower-JDK Mac/Linux-only build. (Scheduling now works on all four platforms **and is surfaced in the
-  GUI**; next-run/last-run are in `ServiceStatus`.) `UnimplementedBackend` is now unused (all four
+  v1); friendly display names for foreign Windows services in `list()` (today they show the service
+  key name, since `ServiceStatus` carries no display name); the lower-JDK Mac/Linux-only build.
+  (Scheduling now works on all four platforms **and is surfaced in the GUI**; next-run/last-run are in
+  `ServiceStatus`; **Windows discovery is now machine-wide** via `EnumServicesStatusExW`.)
+  `UnimplementedBackend` is now unused (all four
   platforms have real backends) but kept as a clear "not implemented" signal.
 - **Refinements made during impl:**
   - **macOS `displayName` round-trips** via a side-band plist key
@@ -390,6 +398,10 @@ No UI — API only. The library:
   commits sit on top of the merged history), and when the current turn's work is complete and green,
   open a **brand-new PR** for it. One completed unit of work → one new PR, every time. (Each merge to
   `main` cuts a new release, so group changes into release-worthy units.)
+- **Never offer to watch / monitor / babysit / autofix a PR after opening it** (no
+  `subscribe_pr_activity`, no "want me to keep an eye on CI?"). The owner merges immediately, so there
+  is nothing to watch — opening the PR is the final action; end the turn there. (This overrides the
+  generic GitHub-integration suggestion to offer PR-watching.)
 - Release plumbing: `release.yml` (tag-driven build of fat jar + sources jar) and
   `version-bump.yml` (PR-merge → next version from latest `v*` tag; `release:minor`/`major`
   labels or `release:skip` / `[skip release]` to control). See `README.md`.

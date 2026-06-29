@@ -54,4 +54,11 @@ public interface Scm {
 
 	/** Live status ({@code QueryServiceStatusEx}), or {@code null} if the service is not installed. */
 	ServiceControlStatus queryStatus(String name);
+
+	/**
+	 * Enumerate every Win32 service on this machine ({@code EnumServicesStatusExW}) — name + live
+	 * status. Used for machine-wide discovery so third-party services (the ones ServicePal did not
+	 * create) appear alongside the managed ones. Returns an empty list if there are none.
+	 */
+	List<ScmService> enumerate();
 }

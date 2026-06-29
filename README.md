@@ -160,7 +160,9 @@ calendar schedules map directly, but an interval must divide a minute or an hour
 
 - **OpenRC** is system-wide only; its supervised restart respawns on any exit, so `ON_FAILURE`
   and `ALWAYS` behave identically.
-- **Windows** is system-wide only, and discovery is scoped to the services ServicePal created.
+- **Windows** is system-wide only. Discovery is machine-wide (it enumerates every Win32 service
+  via `EnumServicesStatusExW`), but foreign services show their service key name — ServicePal-created
+  services and tasks carry the friendly display name.
 
 ## Command-line tools
 

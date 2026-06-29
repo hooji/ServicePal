@@ -12,6 +12,8 @@ import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.VarHandle;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -29,6 +31,14 @@ public final class FfmScm implements Scm {
 	// --- dwDesiredAccess (SCM) ---
 	private static final int SC_MANAGER_CONNECT = 0x0001;
 	private static final int SC_MANAGER_CREATE_SERVICE = 0x0002;
+	private static final int SC_MANAGER_ENUMERATE_SERVICE = 0x0004;
+
+	// --- EnumServicesStatusExW parameters ---
+	private static final int SC_ENUM_PROCESS_INFO = 0;
+	private static final int SERVICE_WIN32 = 0x00000030;     // own-process | share-process (not drivers)
+	private static final int SERVICE_STATE_ALL = 0x00000003;  // active | inactive
+	private static final int ERROR_MORE_DATA = 234;
+	private static final int MAX_ENUM_ITERATIONS = 10_000;   // defensive cap (machines have ~hundreds)
 
 	// --- dwDesiredAccess (service) ---
 	private static final int SERVICE_QUERY_STATUS = 0x0004;
@@ -76,6 +86,7 @@ public final class FfmScm implements Scm {
 	private final MethodHandle changeServiceConfig;
 	private final MethodHandle changeServiceConfig2;
 	private final MethodHandle queryServiceStatusEx;
+	private final MethodHandle enumServicesStatusEx;
 	private final MethodHandle closeServiceHandle;
 
 	public FfmScm() {
@@ -102,6 +113,8 @@ public final class FfmScm implements Scm {
 				FunctionDescriptor.of(i, p, i, p));
 		queryServiceStatusEx = handle(advapi32, capture, "QueryServiceStatusEx",
 				FunctionDescriptor.of(i, p, i, p, i, p));
+		enumServicesStatusEx = handle(advapi32, capture, "EnumServicesStatusExW",
+				FunctionDescriptor.of(i, p, i, i, i, p, i, p, p, p, p));
 		closeServiceHandle = handle(advapi32, capture, "CloseServiceHandle",
 				FunctionDescriptor.of(i, p));
 	}
@@ -316,6 +329,89 @@ public final class FfmScm implements Scm {
 		} catch (final Throwable t) {
 			throw new ServiceException("QueryServiceStatusEx failed for " + name, t);
 		}
+	}
+
+	@Override
+	public List<ScmService> enumerate() {
+		try (Arena a = Arena.ofConfined()) {
+			final MemorySegment capture = a.allocate(captureLayout);
+			final MemorySegment scm = openManager(a, capture, SC_MANAGER_ENUMERATE_SERVICE);
+			try {
+				final List<ScmService> out = new ArrayList<>();
+				final MemorySegment needed = a.allocate(ValueLayout.JAVA_INT);
+				final MemorySegment returned = a.allocate(ValueLayout.JAVA_INT);
+				final MemorySegment resume = a.allocate(ValueLayout.JAVA_INT);
+				resume.set(ValueLayout.JAVA_INT, 0, 0);
+				// Probe with an empty buffer to learn the size, allocate, then read; the SCM may chunk
+				// large result sets, so loop on ERROR_MORE_DATA following the resume handle.
+				MemorySegment buffer = MemorySegment.NULL;
+				int bufSize = 0;
+				for (int guard = 0; guard < MAX_ENUM_ITERATIONS; guard++) {
+					final int ok = (int) enumServicesStatusEx.invoke(capture, scm,
+							SC_ENUM_PROCESS_INFO, SERVICE_WIN32, SERVICE_STATE_ALL,
+							buffer, bufSize, needed, returned, resume, MemorySegment.NULL);
+					final int count = returned.get(ValueLayout.JAVA_INT, 0);
+					if (ok != 0) {
+						if (count > 0) {
+							out.addAll(parseEnumeration(buffer, count));
+						}
+						return out;
+					}
+					if (lastError(capture) != ERROR_MORE_DATA) {
+						throw fail("EnumServicesStatusExW", "(all)", capture);
+					}
+					if (count > 0 && bufSize > 0) {
+						out.addAll(parseEnumeration(buffer, count));   // a partial batch fit; keep going
+					}
+					final int need = needed.get(ValueLayout.JAVA_INT, 0);
+					if (need <= 0) {
+						return out;   // nothing more to read (defensive against a stuck loop)
+					}
+					bufSize = need;
+					// Pointer-aligned: the entries embed LPWSTR pointers we read back via ADDRESS.
+					buffer = a.allocate(bufSize, ValueLayout.ADDRESS.byteSize());
+				}
+				return out;
+			} finally {
+				close(capture, scm);
+			}
+		} catch (final ServiceException e) {
+			throw e;
+		} catch (final Throwable t) {
+			throw new ServiceException("EnumServicesStatusExW failed", t);
+		}
+	}
+
+	/**
+	 * Parse {@code count} {@code ENUM_SERVICE_STATUS_PROCESSW} entries packed at the front of
+	 * {@code buffer} (the service name + display-name strings live in the same buffer's tail, so each
+	 * entry's {@code lpServiceName} pointer is relativized against {@code buffer.address()} and read
+	 * back from the buffer — no reinterpret, so this stays bounds-checked and unit-tests off-Windows).
+	 *
+	 * <p>On 64-bit Windows the struct is two pointers ({@code lpServiceName}, {@code lpDisplayName})
+	 * followed by a 36-byte {@code SERVICE_STATUS_PROCESS}, tail-padded to a pointer-aligned stride.
+	 * Package-visible and static so a test can feed it a hand-built buffer.
+	 */
+	static List<ScmService> parseEnumeration(final MemorySegment buffer, final int count) {
+		final List<ScmService> out = new ArrayList<>(Math.max(0, count));
+		final long ptr = ValueLayout.ADDRESS.byteSize();
+		final long statusBase = 2 * ptr;                                  // after the two LPWSTR pointers
+		final long entrySize = roundUp(statusBase + SERVICE_STATUS_PROCESS_SIZE, ptr);
+		final long base = buffer.address();
+		for (int i = 0; i < count; i++) {
+			final long entry = (long) i * entrySize;
+			final MemorySegment namePtr = buffer.get(ValueLayout.ADDRESS, entry);   // lpServiceName
+			final String name = buffer.getString(namePtr.address() - base, StandardCharsets.UTF_16LE);
+			final int state = buffer.get(ValueLayout.JAVA_INT, entry + statusBase + OFF_CURRENT_STATE);
+			final int exit = buffer.get(ValueLayout.JAVA_INT, entry + statusBase + OFF_WIN32_EXIT);
+			final int pid = buffer.get(ValueLayout.JAVA_INT, entry + statusBase + OFF_PROCESS_ID);
+			out.add(new ScmService(name, ServiceControlStatus.of(state, pid, exit)));
+		}
+		return out;
+	}
+
+	private static long roundUp(final long value, final long alignment) {
+		return (value + alignment - 1) / alignment * alignment;
 	}
 
 	/** Set the delayed-auto-start flag via {@code ChangeServiceConfig2W}

@@ -28,6 +28,10 @@ public final class RecordingScm implements Scm {
 	/** Number of leading {@link #create} calls that fail with ERROR_SERVICE_MARKED_FOR_DELETE. */
 	public int createFailuresMarkedForDelete = 0;
 	private int createCalls = 0;
+	/** Machine-wide services {@link #enumerate} reports (the third-party ones discovery should surface). */
+	public final List<ScmService> enumerated = new ArrayList<>();
+	/** When true, {@link #enumerate} throws (to test that discovery still lists managed services). */
+	public boolean enumerateThrows = false;
 
 	@Override
 	public boolean exists(final String name) {
@@ -99,5 +103,14 @@ public final class RecordingScm implements Scm {
 			return null;
 		}
 		return statusSequence.isEmpty() ? status : statusSequence.poll();
+	}
+
+	@Override
+	public List<ScmService> enumerate() {
+		calls.add("enumerate");
+		if (enumerateThrows) {
+			throw new com.u1.servicepal.ServiceException("simulated enumeration failure");
+		}
+		return new ArrayList<>(enumerated);
 	}
 }

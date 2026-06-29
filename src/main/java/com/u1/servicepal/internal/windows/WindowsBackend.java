@@ -22,8 +22,11 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Windows backend. Routes by job shape (tension T2): a long-running daemon becomes a real
@@ -37,8 +40,9 @@ import java.util.Map;
  * its presence is the managed-by marker, and its {@code kind} field routes by-id operations.
  *
  * <p>SYSTEM_WIDE-only in v1 (no per-user services; {@code perUserInstall} is false). Discovery
- * is sidecar-scoped — it lists the services ServicePal created; machine-wide enumeration of
- * third-party services is a follow-up (status/isInstalled still work for any id via the SCM).
+ * lists the services/tasks ServicePal manages (from their sidecars) <em>and</em> every other Win32
+ * service on the machine ({@code EnumServicesStatusExW}, surfaced as foreign/unmanaged), deduped by
+ * the case-insensitive service name.
  *
  * <p>All native access is behind {@link Scm} (advapi32/FFM) and {@link TaskScheduler}
  * (schtasks), so this backend unit-tests off-Windows with stubs.
@@ -107,23 +111,45 @@ public final class WindowsBackend implements Backend {
 	public Discovery discover(final Installation installation) {
 		final List<ServiceStatus> services = new ArrayList<>();
 		final List<String> unreadable = new ArrayList<>();
-		if (installation != Installation.SYSTEM_WIDE || !Files.isDirectory(sidecarDir)) {
+		if (installation != Installation.SYSTEM_WIDE) {
 			return new Discovery(services, unreadable);
 		}
-		try (DirectoryStream<Path> stream = Files.newDirectoryStream(sidecarDir, "*.json")) {
-			for (final Path file : stream) {
-				final String id = stem(file);
-				try {
-					final ServiceStatus status = status(id, Installation.SYSTEM_WIDE);
-					if (status != null) {
-						services.add(status);
+		// 1. The services/tasks ServicePal manages, from their sidecars (these carry our markers,
+		//    auto-start state, and — for tasks — run times). Service names are case-insensitive on
+		//    Windows, so we dedup against the machine-wide pass by lower-cased name.
+		final Set<String> seen = new HashSet<>();
+		if (Files.isDirectory(sidecarDir)) {
+			try (DirectoryStream<Path> stream = Files.newDirectoryStream(sidecarDir, "*.json")) {
+				for (final Path file : stream) {
+					final String id = stem(file);
+					try {
+						final ServiceStatus status = status(id, Installation.SYSTEM_WIDE);
+						if (status != null) {
+							services.add(status);
+							seen.add(id.toLowerCase(Locale.ROOT));
+						}
+					} catch (final DefinitionIOException e) {
+						unreadable.add(file.toString());
 					}
-				} catch (final DefinitionIOException e) {
-					unreadable.add(file.toString());
+				}
+			} catch (final IOException e) {
+				// unreadable directory — skip
+			}
+		}
+		// 2. Every other Win32 service on the machine (EnumServicesStatusExW) as a foreign (unmanaged)
+		//    entry, so the "other background jobs" view is populated on Windows too. A managed service
+		//    is also a real SCM service, so the lower-cased-name dedup keeps the sidecar entry (which
+		//    is the one that knows it's managed). A failed enumeration must not hide the managed ones.
+		try {
+			for (final ScmService entry : scm.enumerate()) {
+				if (seen.add(entry.name().toLowerCase(Locale.ROOT))) {
+					final ServiceControlStatus st = entry.status();
+					services.add(new ServiceStatus(entry.name(), Installation.SYSTEM_WIDE, true, false,
+							false, false, st.state(), st.pid(), st.lastExitCode(), null));
 				}
 			}
-		} catch (final IOException e) {
-			// unreadable directory — skip
+		} catch (final RuntimeException e) {
+			unreadable.add("<machine-wide service enumeration failed: " + e.getMessage() + ">");
 		}
 		return new Discovery(services, unreadable);
 	}

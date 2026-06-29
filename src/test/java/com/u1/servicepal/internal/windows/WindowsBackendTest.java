@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.u1.servicepal.Installation;
 import com.u1.servicepal.UnmanagedServiceException;
 import com.u1.servicepal.UnsupportedFeatureException;
+import com.u1.servicepal.model.Discovery;
 import com.u1.servicepal.model.RunAs;
 import com.u1.servicepal.model.RunState;
 import com.u1.servicepal.model.Schedule;
@@ -214,6 +215,79 @@ class WindowsBackendTest {
 	void discoverListsManagedServices() {
 		backend.install(daemon(), false);
 		assertEquals(1, backend.discover(Installation.SYSTEM_WIDE).services().size());
+	}
+
+	private static ScmService svc(final String name, final RunState state, final Integer pid) {
+		return new ScmService(name, new ServiceControlStatus(state, pid, null));
+	}
+
+	/** A foreign service by id, for asserting on a specific discovered entry. */
+	private static ServiceStatus find(final List<ServiceStatus> services, final String id) {
+		for (final ServiceStatus s : services) {
+			if (s.id().equals(id)) {
+				return s;
+			}
+		}
+		return null;
+	}
+
+	@Test
+	void discoverIncludesForeignMachineServices() {
+		scm.enumerated.add(svc("Spooler", RunState.RUNNING, 1320));
+		scm.enumerated.add(svc("W32Time", RunState.STOPPED, null));
+
+		final List<ServiceStatus> services = backend.discover(Installation.SYSTEM_WIDE).services();
+		assertEquals(2, services.size());
+		final ServiceStatus spooler = find(services, "Spooler");
+		assertNotNull(spooler);
+		assertFalse(spooler.managed(), "a third-party service is not managed by ServicePal");
+		assertEquals(RunState.RUNNING, spooler.state());
+		assertEquals(Integer.valueOf(1320), spooler.pid());
+		assertEquals(RunState.STOPPED, find(services, "W32Time").state());
+	}
+
+	@Test
+	void discoverMergesManagedAndForeignServices() {
+		backend.install(daemon(), false);                       // managed
+		scm.enumerated.add(svc("Spooler", RunState.RUNNING, 1320));   // foreign
+
+		final List<ServiceStatus> services = backend.discover(Installation.SYSTEM_WIDE).services();
+		assertEquals(2, services.size());
+		assertTrue(find(services, ID).managed());
+		assertFalse(find(services, "Spooler").managed());
+	}
+
+	@Test
+	void discoverDoesNotDuplicateAManagedServiceAlsoInEnumeration() {
+		backend.install(daemon(), false);
+		// A managed service is also a real SCM service, so it appears in the enumeration too.
+		scm.enumerated.add(svc(ID, RunState.RUNNING, 1234));
+		scm.enumerated.add(svc("Spooler", RunState.RUNNING, 1320));
+
+		final List<ServiceStatus> services = backend.discover(Installation.SYSTEM_WIDE).services();
+		assertEquals(2, services.size(), "the managed service is listed once, not duplicated");
+		assertTrue(find(services, ID).managed(), "the sidecar (managed) entry wins over the foreign one");
+	}
+
+	@Test
+	void discoverDedupsServiceNamesCaseInsensitively() {
+		backend.install(daemon().toBuilder().id("AcmeSvc").build(), false);
+		scm.enumerated.add(svc("acmesvc", RunState.RUNNING, 7));   // Windows names are case-insensitive
+
+		final List<ServiceStatus> services = backend.discover(Installation.SYSTEM_WIDE).services();
+		assertEquals(1, services.size());
+		assertTrue(services.get(0).managed());
+	}
+
+	@Test
+	void enumerationFailureStillListsManagedServices() {
+		backend.install(daemon(), false);
+		scm.enumerateThrows = true;
+
+		final Discovery discovery = backend.discover(Installation.SYSTEM_WIDE);
+		assertEquals(1, discovery.services().size(), "managed services still discovered");
+		assertTrue(discovery.services().get(0).managed());
+		assertEquals(1, discovery.unreadable().size(), "the enumeration failure is reported, not hidden");
 	}
 
 	@Test

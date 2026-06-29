@@ -43,8 +43,9 @@ those rewrite or delete a service we did not create:
 So the awkward `yesDoThisToAServiceIDidNotCreate` override is still the only path that touches a
 service we didn’t create — the GUI just takes it deliberately, behind a warning, instead of hiding it.
 The adoption marker keeps discovery honest: an adopted service is shown as managed **without** ever
-being mislabelled as one we created. (On Windows, discovery is sidecar-scoped, so foreign services
-do not appear there today; adoption still applies if you install over an existing service by id.)
+being mislabelled as one we created. (On Windows, discovery is machine-wide — it enumerates every
+Win32 service via `EnumServicesStatusExW` — so foreign services show in the "Other background jobs"
+section too, by their service key name.)
 
 ## The one cross-platform decision: the auto privilege model
 

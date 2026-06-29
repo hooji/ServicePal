@@ -90,6 +90,21 @@ public final class SelfTestCli {
 				final ServiceStatus after = mgr.status(ID);
 				failures += check("upsert keeps it installed", after.installed());
 				failures += check("upsert keeps it running", after.state() == RunState.RUNNING);
+
+				// Machine-wide discovery via EnumServicesStatusExW: a Windows box always runs many
+				// services, so this actively exercises the FFM enumeration against the real SCM (not
+				// just our own service) and proves third-party services now surface in list().
+				final java.util.List<ServiceStatus> all = mgr.list();
+				boolean sawForeign = false;
+				boolean sawOurs = false;
+				for (final ServiceStatus s : all) {
+					sawForeign = sawForeign || !s.managed();
+					sawOurs = sawOurs || ID.equals(s.id());
+				}
+				System.out.println("machine-wide services discovered: " + all.size());
+				failures += check("discovery enumerates machine-wide services", all.size() > 5);
+				failures += check("discovery includes third-party (unmanaged) services", sawForeign);
+				failures += check("discovery still includes our managed service", sawOurs);
 			}
 		} catch (final Throwable t) {
 			System.out.println("SELFTEST ERROR: " + t);
