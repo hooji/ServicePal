@@ -93,15 +93,23 @@ public final class ServicePalGui {
 		});
 		Screenshotter.capture(win[0], parsed.screenshotDir.resolve("main-" + tag + ".png"));
 
-		final JDialog[] dialog = new JDialog[1];
-		SwingUtilities.invokeAndWait(() -> {
-			dialog[0] = JobDialog.buildForScreenshot(win[0], sampleAddForm(platform));
-			dialog[0].setLocation(win[0].getX() + 130, win[0].getY() + 80);
-			dialog[0].setVisible(true);
-		});
-		Screenshotter.capture(dialog[0], parsed.screenshotDir.resolve("add-job-" + tag + ".png"));
+		captureAddJob(parsed, win[0], sampleAddForm(platform), "add-job-" + tag);
+		// A second capture in "On a schedule" mode, showing the repeat picker.
+		captureAddJob(parsed, win[0], sampleScheduledForm(platform), "add-job-scheduled-" + tag);
 		System.out.println("DEMO SCREENSHOTS DONE (" + tag + ")");
 		System.exit(0);
+	}
+
+	private static void captureAddJob(final Args parsed, final MainWindow owner, final JobForm form,
+			final String name) throws Exception {
+		final JDialog[] dialog = new JDialog[1];
+		SwingUtilities.invokeAndWait(() -> {
+			dialog[0] = JobDialog.buildForScreenshot(owner, form, true);
+			dialog[0].setLocation(owner.getX() + 130, owner.getY() + 80);
+			dialog[0].setVisible(true);
+		});
+		Screenshotter.capture(dialog[0], parsed.screenshotDir.resolve(name + ".png"));
+		SwingUtilities.invokeAndWait(dialog[0]::dispose);
 	}
 
 	private static JobForm sampleAddForm(final Platform platform) {
@@ -109,6 +117,14 @@ public final class ServicePalGui {
 		return new JobForm(null, "Nightly Backup",
 				win ? "C:\\Tools\\backup.exe" : "/usr/local/bin/backup", "--daemon",
 				win ? "C:\\Backups" : "/var/backups", true, RestartPolicy.ALWAYS);
+	}
+
+	private static JobForm sampleScheduledForm(final Platform platform) {
+		final boolean win = platform == Platform.WINDOWS;
+		return new JobForm(null, "Weekly Report",
+				win ? "C:\\Tools\\report.exe" : "/usr/local/bin/report", "--weekly",
+				win ? "C:\\Reports" : "/var/reports", false, RestartPolicy.NEVER,
+				com.u1.servicepal.model.Schedule.weeklyAt(java.time.DayOfWeek.MONDAY, 9, 0));
 	}
 
 	// --- live screenshot (real backend; macOS + Windows in CI) ---

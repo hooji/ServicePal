@@ -57,6 +57,14 @@ public final class DemoServiceManager implements ServiceManager {
 				enabled, managed, adopted, state, pid, lastExitCode, null));
 	}
 
+	/** Seed a managed (created-here) job with scheduled run times, for the demo's scheduled row. */
+	public void seedScheduled(final ServiceSpec spec, final RunState state, final boolean enabled,
+			final java.time.Instant nextRun, final java.time.Instant lastRun) {
+		specs.put(spec.id(), spec);
+		statuses.put(spec.id(), new ServiceStatus(spec.id(), spec.runAs().installation(), true,
+				enabled, true, false, state, null, null, null).withRunTimes(nextRun, lastRun));
+	}
+
 	@Override
 	public Platform platform() {
 		return platform;

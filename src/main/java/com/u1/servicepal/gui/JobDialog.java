@@ -17,11 +17,13 @@ import javax.swing.JPanel;
  */
 final class JobDialog extends JDialog {
 
-	private final JobFormPanel form = new JobFormPanel();
+	private final JobFormPanel form;
 	private JobForm result;
 
-	private JobDialog(final Window owner, final String title, final JobForm initial) {
+	private JobDialog(final Window owner, final String title, final JobForm initial,
+			final boolean schedulingSupported) {
 		super(owner, title, ModalityType.APPLICATION_MODAL);
+		form = new JobFormPanel(schedulingSupported);
 		form.setForm(initial);
 
 		final JButton cancel = new JButton("Cancel");
@@ -58,8 +60,9 @@ final class JobDialog extends JDialog {
 	}
 
 	/** Show modally; returns the entered form, or {@code null} if cancelled. */
-	static JobForm showDialog(final Window owner, final String title, final JobForm initial) {
-		final JobDialog dialog = new JobDialog(owner, title, initial);
+	static JobForm showDialog(final Window owner, final String title, final JobForm initial,
+			final boolean schedulingSupported) {
+		final JobDialog dialog = new JobDialog(owner, title, initial, schedulingSupported);
 		dialog.setVisible(true);   // blocks until disposed
 		return dialog.result;
 	}
@@ -73,8 +76,9 @@ final class JobDialog extends JDialog {
 	 * Build the same dialog but <em>modeless</em> and pre-filled, for the screenshot harness to
 	 * show, capture, and dispose without blocking. Not used by the interactive app.
 	 */
-	static JobDialog buildForScreenshot(final Window owner, final JobForm initial) {
-		final JobDialog dialog = new JobDialog(owner, "Add Job", initial);
+	static JobDialog buildForScreenshot(final Window owner, final JobForm initial,
+			final boolean schedulingSupported) {
+		final JobDialog dialog = new JobDialog(owner, "Add Job", initial, schedulingSupported);
 		dialog.setModal(false);
 		return dialog;
 	}

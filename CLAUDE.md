@@ -108,11 +108,11 @@ macOS-backend shape.
   ubuntu/macos/windows (JDK 25); the probe runs a real `systemctl` lifecycle (sudo) on the ubuntu
   runner, a real launchd lifecycle on macOS, a real `rc-service` lifecycle in an Alpine/OpenRC
   container, and a real Windows-service lifecycle (the FFM host) on the windows runner.
-- **Not yet (refinements, not platforms):** GUI scheduling UI; next-run/last-run in `ServiceStatus`;
-  per-user Windows services (Windows is SYSTEM_WIDE-only in v1); machine-wide enumeration of
-  third-party Windows services (`list()` is sidecar-scoped there); the lower-JDK Mac/Linux-only
-  build. (Scheduling itself now works on all four platforms.) `UnimplementedBackend` is now unused (all
-  four platforms have real backends) but kept as a clear "not implemented" signal.
+- **Not yet (refinements, not platforms):** per-user Windows services (Windows is SYSTEM_WIDE-only in
+  v1); machine-wide enumeration of third-party Windows services (`list()` is sidecar-scoped there); the
+  lower-JDK Mac/Linux-only build. (Scheduling now works on all four platforms **and is surfaced in the
+  GUI**; next-run/last-run are in `ServiceStatus`.) `UnimplementedBackend` is now unused (all four
+  platforms have real backends) but kept as a clear "not implemented" signal.
 - **Refinements made during impl:**
   - **macOS `displayName` round-trips** via a side-band plist key
     (`com.u1.servicepal.DisplayName`, written only when it differs from the id) because launchd has
@@ -182,13 +182,18 @@ dispatcher), so the jar's role as the Windows "execution helper" is preserved.
   three header-separated sections — **"Created with ServicePal"**, **"Adopted by ServicePal"** (we
   installed over a service we didn't create), and **"Other background jobs"** (everything else found
   on the machine). All jobs show status dots/pid/state and are **actionable**: add/edit (name, command,
-  arguments, working folder, *start automatically*, *if it stops* → `RestartPolicy`), start/stop/restart,
-  remove. **Editing/removing a foreign job is allowed but confirmed first** — edit warns it will be
-  rewritten in our format + adopted (`install(spec, true)`, which stamps the adoption marker), remove
-  warns it wasn't ours (`uninstall(id, true)`); these are the only paths that take the
+  arguments, working folder, and a **keep-running vs on-a-schedule mode toggle** — keep-running picks
+  *start automatically* + *if it stops* → `RestartPolicy`; on-a-schedule shows a simple Repeat picker
+  (`SchedulePanel`: every-N-minutes / daily / weekly → `Schedule`)), start/stop/restart, remove. A
+  scheduled job reads **"Scheduled"** (a blue relabel of its idle state, `StatusVisuals`) with its
+  Schedule / Next run / Last run shown in the detail panel (`ScheduleText`); saving it arms the schedule
+  (`install` + `enable`, no start-now; systemd's `.timer` also gets a `restart`) — see
+  `JobsController.applySave`. **Editing/removing a foreign job is allowed but confirmed first** — edit
+  warns it will be rewritten in our format + adopted (`install(spec, true)`, which stamps the adoption
+  marker), remove warns it wasn't ours (`uninstall(id, true)`); these are the only paths that take the
   `yesDoThisToAServiceIDidNotCreate` override, now used deliberately behind a warning rather than hidden.
-  Section headers are non-selectable (`JobListPanel` skips them in `changeSelection`). Hides schedules,
-  run-as identity, `.mac()/.systemd()/...` blocks — the UI is identical on all four platforms.
+  Section headers are non-selectable (`JobListPanel` skips them in `changeSelection`). Hides run-as
+  identity and `.mac()/.systemd()/...` blocks — the UI is identical on all four platforms.
 - **Auto privilege model** (`JobSpecs.fromForm` + `capabilities()`): per-user where supported
   (macOS/systemd → no admin, login start), else system daemon (Windows/OpenRC → boot start, needs
   elevation). The GUI never mentions `RunAs`/`Installation`.
@@ -231,10 +236,10 @@ dispatcher), so the jar's role as the Windows "execution helper" is preserved.
 - `docs/ROADMAP.md` — deferred items (WinSW alt host, lower-JDK Mac/Linux build, SysV/runit,
   cron fallback, D-Bus).
 
-## ▶ Cross-platform scheduling (in progress)
+## ▶ Cross-platform scheduling (DONE)
 
 Owner approved adding scheduling to **all four platforms** + showing next-run/last-run. Sequenced as
-release-worthy PRs:
+release-worthy PRs — all four merged:
 1. ✅ **systemd `.timer`** — DONE. `.timer` + oneshot `.service` pair; `calendar`/`interval`
    caps flipped true; real `.timer` armed by the probe.
 2. ✅ **OpenRC scheduling via a cron fallback** — DONE. `Cron` seam (`crontab`) + `CronSchedule`
@@ -247,9 +252,15 @@ release-worthy PRs:
    `LastTriggerUSec` — next only realtime for calendar timers); OpenRC/cron computes next-run
    (`CronSchedule.nextRun`, no last); **launchd exposes neither**, so macOS leaves them null. The
    probe checks `nextRun != null` on real systemd + OpenRC.
-4. **GUI scheduling** — a "Keep running" vs "On a schedule" mode toggle, a simple Repeat picker
-   (every-N / daily / weekly), the "Scheduled" status relabel + next/last-run display, and an
-   install-without-start-now flow. (Scheduling is currently in the GUI's "Deliberately out" list.)
+4. ✅ **GUI scheduling** — DONE. A "Keep it running" vs "On a schedule" mode toggle in the add/edit
+   form (`JobFormPanel`, `CardLayout`); a simple Repeat picker (`SchedulePanel`: every-N-minutes
+   [divisors of 60, so cron-safe on OpenRC] / daily / weekly → `Schedule`); the **"Scheduled"** status
+   relabel (`StatusVisuals`, blue) in the list + detail; Schedule / Next run / Last run rows in the
+   detail panel (`ScheduleText`); and an **arm-without-start-now** save flow (`JobsController.applySave`
+   → `install` + `enable`; systemd's `.timer` also `restart`ed). `JobSpecs` normalizes a scheduled job
+   to `autoStart=false`/`restart=NEVER`. The toggle hides where `capabilities()` reports no scheduling
+   (all four platforms support it today). DemoData seeds a scheduled "Database Snapshot" row; the
+   screenshot harness adds an `add-job-scheduled-<tag>.png` capture of the picker.
 
 Other deferred refinements: **Windows polish** (per-user services, machine-wide `EnumServicesStatusExW`
 discovery, delayed-auto start, recovery actions); **lower-JDK Mac/Linux-only build** (the JDK 25 floor

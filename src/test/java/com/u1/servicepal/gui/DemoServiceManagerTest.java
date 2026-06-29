@@ -10,8 +10,10 @@ import com.u1.servicepal.Capabilities;
 import com.u1.servicepal.Platform;
 import com.u1.servicepal.model.RestartPolicy;
 import com.u1.servicepal.model.RunState;
+import com.u1.servicepal.model.Schedule;
 import com.u1.servicepal.model.ServiceSpec;
 import com.u1.servicepal.model.ServiceStatus;
+import java.time.Instant;
 import org.junit.jupiter.api.Test;
 
 class DemoServiceManagerTest {
@@ -124,6 +126,22 @@ class DemoServiceManagerTest {
 		manager.install(spec(true));
 		assertTrue(manager.status("com.example.demo").managed());
 		assertFalse(manager.status("com.example.demo").adopted());
+	}
+
+	@Test
+	void seedScheduledExposesScheduleAndRunTimes() {
+		final DemoServiceManager manager = newManager();
+		final Instant next = Instant.parse("2026-07-01T02:00:00Z");
+		final ServiceSpec scheduled = ServiceSpec.builder().id("com.example.sched")
+				.command("/bin/snapshot").schedule(Schedule.dailyAt(2, 0)).build();
+		manager.seedScheduled(scheduled, RunState.STOPPED, true, next, null);
+
+		final ServiceStatus status = manager.status("com.example.sched");
+		assertEquals(next, status.nextRun());
+		assertNull(status.lastRun());
+		assertTrue(status.managed());
+		assertFalse(status.adopted());
+		assertNotNull(manager.read("com.example.sched").schedule());
 	}
 
 	@Test

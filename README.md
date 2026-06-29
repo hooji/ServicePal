@@ -140,7 +140,7 @@ you opt in with the explicit `install(spec, true)` / `uninstall(id, true)` overl
 | Per-user services | ✅ | ✅ | — | — |
 | System-wide services | ✅ | ✅ | ✅ | ✅ |
 | Run as a named user | ✅ | ✅ | ✅ | ✅ |
-| Scheduled jobs (calendar / interval) | ✅ | — | — | ✅ |
+| Scheduled jobs (calendar / interval) | ✅ | ✅ | ✅¹ | ✅ |
 | Restart / keep-alive | ✅ | ✅ | ✅ | ✅ |
 | Log-file redirection | ✅ | ✅ | ✅ | ✅ |
 
@@ -151,12 +151,15 @@ bundled pure-Java FFM **service host** — it speaks the SCM control protocol an
 your command (a plain `java -jar` run as a service cannot, and fails with error 1053). A
 *scheduled* job is routed to **Task Scheduler** instead, where it runs your command directly.
 
+Scheduling is mapped to each platform's native facility: launchd `StartCalendarInterval` /
+`StartInterval`, a systemd `.timer` + oneshot `.service` pair (`OnCalendar` / `OnUnitActiveSec`),
+and Windows Task Scheduler. ¹ **OpenRC** has no native scheduler, so it uses a **cron fallback**:
+calendar schedules map directly, but an interval must divide a minute or an hour (others fail fast).
+
 **Current limitations:**
 
-- **systemd** scheduling (`.timer` units) is not supported; a spec with a `schedule` fails
-  fast on systemd.
-- **OpenRC** is system-wide only and has no native scheduler; its supervised restart respawns
-  on any exit, so `ON_FAILURE` and `ALWAYS` behave identically.
+- **OpenRC** is system-wide only; its supervised restart respawns on any exit, so `ON_FAILURE`
+  and `ALWAYS` behave identically.
 - **Windows** is system-wide only, and discovery is scoped to the services ServicePal created.
 
 ## Command-line tools
@@ -175,8 +178,8 @@ platform.
 ## Desktop GUI
 
 The same jar also ships a small cross-platform desktop GUI for the **common case** — set up jobs to
-be auto-started and kept running in the background. It is **opt-in** via an explicit first argument
-(the no-argument default stays the discovery CLI):
+run in the background, either kept running or on a schedule. It is **opt-in** via an explicit first
+argument (the no-argument default stays the discovery CLI):
 
 ```sh
 java -jar servicepal.jar -ui          # launch the GUI (also: --ui, gui)
@@ -188,11 +191,13 @@ It lists **every service the platform can discover**, grouped into sections — 
 and **other background jobs** found on the machine. Every job is controllable (start/stop/restart,
 add/edit, remove); editing or removing a service ServicePal didn't create is allowed but asks first
 (editing rewrites it in ServicePal's format and adopts it). For your own jobs you set name + command,
-optional working folder, *start automatically*, and what to do *if it stops*. It deliberately hides
-everything platform-specific (schedules, run-as identity, the `.mac()/.systemd()/...` option blocks):
-the UI is identical on every platform. Where the platform
-supports per-user services (macOS, systemd) it installs without admin and starts at login; where it
-does not (Windows, OpenRC) it installs a system-wide service (run the app elevated).
+optional working folder, and pick a mode: **keep it running** (*start automatically* + what to do
+*if it stops*) or **on a schedule** (a simple every-N-minutes / daily / weekly picker; a scheduled
+job shows as “Scheduled” with its next/last run). It deliberately hides the rest of the
+platform-specific surface (run-as identity, the `.mac()/.systemd()/...` option blocks): the UI is
+identical on every platform. Where the platform supports per-user services (macOS, systemd) it
+installs without admin and starts at login; where it does not (Windows, OpenRC) it installs a
+system-wide service (run the app elevated).
 
 Built with Swing. On macOS it uses [FlatLaf](https://www.formdev.com/flatlaf/), following the OS
 light/dark setting; on Windows and Linux it uses the platform's native look-and-feel. CI captures

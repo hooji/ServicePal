@@ -1,6 +1,5 @@
 package com.u1.servicepal.gui;
 
-import com.u1.servicepal.model.RunState;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Font;
@@ -14,9 +13,9 @@ import javax.swing.border.Border;
 import javax.swing.table.DefaultTableCellRenderer;
 
 /**
- * The master list (left side): a table of jobs with status dots, grouped into two non-selectable
- * sections (the jobs ServicePal created, then everything else discovered on the machine). Header
- * rows are skipped by mouse and keyboard selection; notifies on the selected {@link Job}.
+ * The master list (left side): a table of jobs with status dots, grouped into up to three
+ * non-selectable sections (created here, adopted, then everything else discovered on the machine).
+ * Header rows are skipped by mouse and keyboard selection; notifies on the selected {@link Job}.
  */
 final class JobListPanel extends JTable {
 
@@ -151,7 +150,7 @@ final class JobListPanel extends JTable {
 			setFont(getFont().deriveFont(Font.PLAIN));   // reset: the renderer is reused across rows
 			if (value instanceof Job job) {
 				setText(job.displayName());
-				setIcon(StatusVisuals.icon(job.status().state()));
+				setIcon(StatusVisuals.icon(job));
 				setIconTextGap(8);
 			}
 			setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 0));
@@ -159,18 +158,18 @@ final class JobListPanel extends JTable {
 		}
 	}
 
-	/** Column 1: the run-state label colored by state, or blank on a section header. */
+	/** Column 1: the run-state label (or "Scheduled") colored by state, or blank on a section header. */
 	private static final class StateRenderer extends DefaultTableCellRenderer {
 		@Override
 		public Component getTableCellRendererComponent(final JTable table, final Object value,
 				final boolean isSelected, final boolean hasFocus, final int row, final int column) {
 			super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
-			if (value instanceof RunState state) {
-				setText(StatusVisuals.label(state));
+			if (value instanceof Job job) {
+				setText(StatusVisuals.label(job));
 				setBorder(BorderFactory.createEmptyBorder());
 				// Color the label by state, but let the L&F own the selected row's foreground.
 				if (!isSelected) {
-					setForeground(StatusVisuals.color(state));
+					setForeground(StatusVisuals.color(job));
 				}
 			} else {
 				setText("");   // section header: continue its divider line across this column

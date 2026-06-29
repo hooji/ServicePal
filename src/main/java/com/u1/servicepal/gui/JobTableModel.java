@@ -8,8 +8,8 @@ import javax.swing.table.AbstractTableModel;
  * Backs the master job list. Each row is either a {@link Header} (a non-selectable section divider)
  * or a {@link Job}. Jobs are split into up to three sections — the ones ServicePal created, the ones
  * it adopted (installed over but did not create), then everything else discovered on the machine.
- * Column 0 carries the row object (a {@link Header} or a {@link Job}); column 1 carries the run
- * state (blank for a header).
+ * Both columns carry the row object (a {@link Header} or a {@link Job}) — column 0 renders the name,
+ * column 1 the run state (or "Scheduled"); a header renders blank in column 1.
  */
 final class JobTableModel extends AbstractTableModel {
 
@@ -99,8 +99,8 @@ final class JobTableModel extends AbstractTableModel {
 		if (row instanceof Header header) {
 			return columnIndex == 0 ? header : "";
 		}
-		final Job job = (Job) row;
-		return columnIndex == 0 ? job : job.status().state();
+		// Both columns get the Job; the column renderers extract what they need (name vs. run state).
+		return row;
 	}
 
 	@Override

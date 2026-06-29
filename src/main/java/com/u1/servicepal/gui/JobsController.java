@@ -1,5 +1,6 @@
 package com.u1.servicepal.gui;
 
+import com.u1.servicepal.Capabilities;
 import com.u1.servicepal.Platform;
 import com.u1.servicepal.ServiceManager;
 import com.u1.servicepal.model.RestartPolicy;
@@ -185,10 +186,17 @@ final class JobsController implements JobActions {
 
 	@Override
 	public void addJob() {
-		final JobForm form = JobDialog.showDialog(owner, "Add Job", JobDialog.blankForm());
+		final JobForm form = JobDialog.showDialog(owner, "Add Job", JobDialog.blankForm(),
+				supportsScheduling());
 		if (form != null) {
 			save(form, false);
 		}
+	}
+
+	/** Whether this platform can schedule jobs (so the form offers the "On a schedule" mode). */
+	private boolean supportsScheduling() {
+		final Capabilities caps = manager.capabilities();
+		return caps.calendarSchedule() || caps.intervalSchedule();
 	}
 
 	@Override
@@ -201,7 +209,7 @@ final class JobsController implements JobActions {
 		if (foreign && !confirmForeignEdit(job)) {
 			return;
 		}
-		final JobForm form = JobDialog.showDialog(owner, "Edit Job", toForm(job));
+		final JobForm form = JobDialog.showDialog(owner, "Edit Job", toForm(job), supportsScheduling());
 		if (form != null) {
 			save(form, foreign);   // editing a foreign service overwrites it (and adopts it)
 		}
@@ -290,6 +298,10 @@ final class JobsController implements JobActions {
 			final ServiceSpec spec, final boolean wasRunning, final boolean autoStart,
 			final boolean overwriteUnmanaged) {
 		mgr.install(spec, overwriteUnmanaged);
+		if (spec.schedule() != null) {
+			armSchedule(mgr, spec.id());   // a scheduled job: arm it, never "start now"
+			return;
+		}
 		if (!autoStart) {
 			try {
 				mgr.disable(spec.id());
@@ -305,6 +317,21 @@ final class JobsController implements JobActions {
 			mgr.restart(spec.id());   // apply the changed definition to the running instance
 		}
 		// running + only a cosmetic change (e.g. rename): leave it running as-is.
+	}
+
+	/**
+	 * Arm a scheduled job so it fires on its schedule and persists across reboot, <em>without</em>
+	 * running it now. {@code enable} arms it on every platform (systemd {@code .timer} symlink,
+	 * OpenRC crontab entry, Windows task enabled, launchd load). A systemd {@code .timer} additionally
+	 * needs an explicit (re)start to activate in the current session and to pick up an edited schedule
+	 * — and that starts the <em>timer</em>, not the job. On the other platforms {@code enable} already
+	 * armed it and a "start"/"run" would execute the command immediately, so we don't.
+	 */
+	private static void armSchedule(final ServiceManager mgr, final String id) {
+		mgr.enable(id);
+		if (mgr.platform() == Platform.LINUX_SYSTEMD) {
+			mgr.restart(id);
+		}
 	}
 
 	/** Whether a field that affects the running process changed (vs. just the display name). */
@@ -447,7 +474,7 @@ final class JobsController implements JobActions {
 		final String args = joinArgs(command);
 		final String folder = spec.workingDirectory() == null ? "" : spec.workingDirectory().toString();
 		return new JobForm(spec.id(), spec.displayName(), program, args, folder,
-				job.status().enabled(), spec.restart());
+				job.status().enabled(), spec.restart(), spec.schedule());
 	}
 
 	/** Re-join the argument tail, quoting any element that contains whitespace. */

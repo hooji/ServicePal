@@ -1,6 +1,7 @@
 package com.u1.servicepal.gui;
 
 import com.u1.servicepal.Capabilities;
+import com.u1.servicepal.model.RestartPolicy;
 import com.u1.servicepal.model.ServiceSpec;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -27,10 +28,15 @@ public final class JobSpecs {
 		command.add(form.command() == null ? "" : form.command().trim());
 		command.addAll(tokenize(form.arguments()));
 
-		final ServiceSpec.Builder b = ServiceSpec.builder()
-				.command(command)
-				.autoStart(form.autoStart())
-				.restart(form.restart());
+		final ServiceSpec.Builder b = ServiceSpec.builder().command(command);
+		if (form.scheduled()) {
+			// A scheduled job runs on its schedule: it is not a kept-running daemon, so it does not
+			// run at load and has no keep-alive (the builder also forbids schedule + RestartPolicy
+			// .ALWAYS). The schedule itself is the trigger; arming it is the GUI's "enable".
+			b.schedule(form.schedule()).autoStart(false).restart(RestartPolicy.NEVER);
+		} else {
+			b.autoStart(form.autoStart()).restart(form.restart());
+		}
 		if (form.id() != null && !form.id().isBlank()) {
 			b.id(form.id());
 		}

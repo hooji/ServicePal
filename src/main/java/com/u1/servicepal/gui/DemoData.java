@@ -4,7 +4,10 @@ import com.u1.servicepal.Capabilities;
 import com.u1.servicepal.Platform;
 import com.u1.servicepal.model.RestartPolicy;
 import com.u1.servicepal.model.RunState;
+import com.u1.servicepal.model.Schedule;
 import com.u1.servicepal.model.ServiceSpec;
+import java.time.Instant;
+import java.time.ZonedDateTime;
 
 /**
  * Seeds a {@link DemoServiceManager} with a representative, deterministic set of jobs (two
@@ -42,6 +45,13 @@ public final class DemoData {
 				null, true, RestartPolicy.ON_FAILURE),
 				RunState.FAILED, null, true, 1);
 
+		// A scheduled job (created here): runs daily, so it reads "Scheduled" with a next/last run
+		// rather than "Running"/"Stopped".
+		mgr.seedScheduled(scheduledJob(caps, "Database Snapshot", "com.example.dbsnapshot",
+				win ? "C:\\Tools\\snapshot.exe" : "/usr/local/bin/snapshot", "--all",
+				win ? "C:\\Snapshots" : "/var/snapshots", Schedule.dailyAt(2, 0)),
+				RunState.STOPPED, true, dailyAt(2), dailyAt(2).minusSeconds(86400));
+
 		// One job ServicePal adopted: it installed over a service it did not originally create.
 		mgr.seed(job(caps, "Mail Indexer", "com.example.mailindex",
 				win ? "C:\\Tools\\mailindex.exe" : "/usr/local/bin/mailindex", "--watch",
@@ -50,6 +60,16 @@ public final class DemoData {
 
 		seedOthers(mgr, platform);
 		return mgr;
+	}
+
+	/** The next occurrence of {@code hour}:00 local time (a believable next-run for a daily job). */
+	private static Instant dailyAt(final int hour) {
+		final ZonedDateTime now = ZonedDateTime.now();
+		ZonedDateTime next = now.withHour(hour).withMinute(0).withSecond(0).withNano(0);
+		if (!next.isAfter(now)) {
+			next = next.plusDays(1);
+		}
+		return next.toInstant();
 	}
 
 	/**
@@ -111,15 +131,27 @@ public final class DemoData {
 				new JobForm(id, name, command, arguments, folder, autoStart, restart), caps);
 	}
 
-	/** Capabilities mirroring each real backend closely enough for the badge and privilege model. */
+	private static ServiceSpec scheduledJob(final Capabilities caps, final String name, final String id,
+			final String command, final String arguments, final String folder,
+			final Schedule schedule) {
+		return JobSpecs.fromForm(
+				new JobForm(id, name, command, arguments, folder, false, RestartPolicy.NEVER, schedule),
+				caps);
+	}
+
+	/**
+	 * Capabilities mirroring each real backend closely enough for the badge and privilege model.
+	 * All four platforms now support calendar + interval scheduling (launchd, systemd {@code .timer},
+	 * the OpenRC cron fallback, Windows Task Scheduler).
+	 */
 	private static Capabilities capabilitiesFor(final Platform platform) {
 		return switch (platform) {
 			case MACOS_LAUNCHD ->
 					new Capabilities(true, true, true, true, true, true, true, true, false);
 			case LINUX_SYSTEMD ->
-					new Capabilities(true, true, true, false, false, true, true, true, true);
+					new Capabilities(true, true, true, true, true, true, true, true, true);
 			case LINUX_OPENRC ->
-					new Capabilities(false, true, true, false, false, true, false, true, false);
+					new Capabilities(false, true, true, true, true, true, false, true, false);
 			case WINDOWS ->
 					new Capabilities(false, true, true, true, true, true, false, true, true);
 		};

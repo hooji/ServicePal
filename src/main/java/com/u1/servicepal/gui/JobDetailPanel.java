@@ -31,6 +31,10 @@ final class JobDetailPanel extends JPanel {
 	private final JLabel folderValue = new JLabel();
 	private final JLabel autoStartValue = new JLabel();
 	private final JLabel restartValue = new JLabel();
+	private final JLabel scheduleValue = new JLabel();
+	private final JLabel nextRunValue = new JLabel();
+	private final JLabel lastRunValue = new JLabel();
+	private final JPanel grid = new JPanel(new GridBagLayout());
 	private final JButton startBtn = new JButton("Start");
 	private final JButton stopBtn = new JButton("Stop");
 	private final JButton restartBtn = new JButton("Restart");
@@ -70,13 +74,11 @@ final class JobDetailPanel extends JPanel {
 		heading.add(managedNote);
 		panel.add(heading, BorderLayout.NORTH);
 
-		final JPanel grid = new JPanel(new GridBagLayout());
-		addRow(grid, 0, "Status", statusValue);
-		addRow(grid, 1, "Command", commandValue);
-		addRow(grid, 2, "Folder", folderValue);
-		addRow(grid, 3, "Start automatically", autoStartValue);
-		addRow(grid, 4, "If it stops", restartValue);
-		panel.add(grid, BorderLayout.CENTER);
+		// The grid rows are (re)built per job in showJob: a kept-running job shows "Start
+		// automatically" / "If it stops"; a scheduled job shows "Schedule" / "Next run" / "Last run".
+		final JPanel gridHolder = new JPanel(new BorderLayout());
+		gridHolder.add(grid, BorderLayout.NORTH);
+		panel.add(gridHolder, BorderLayout.CENTER);
 
 		final JPanel buttons = new JPanel();
 		buttons.setLayout(new BoxLayout(buttons, BoxLayout.LINE_AXIS));
@@ -122,33 +124,60 @@ final class JobDetailPanel extends JPanel {
 		}
 		final ServiceStatus status = job.status();
 		final ServiceSpec spec = job.spec();
-		title.setIcon(StatusVisuals.icon(status.state()));
+		title.setIcon(StatusVisuals.icon(job));
 		title.setIconTextGap(10);
 		title.setText(job.displayName());
 
 		managedNote.setText(provenanceNote(job));
 		managedNote.setVisible(managedNote.getText() != null);
 
-		statusValue.setText(statusText(status));
-		statusValue.setForeground(StatusVisuals.color(status.state()));
+		statusValue.setText(statusText(job));
+		statusValue.setForeground(StatusVisuals.color(job));
 		commandValue.setText(spec == null ? "(unreadable)" : String.join(" ", spec.command()));
 		folderValue.setText(spec == null || spec.workingDirectory() == null
 				? "—" : spec.workingDirectory().toString());
-		autoStartValue.setText(status.enabled() ? "Yes" : "No");
-		restartValue.setText(spec == null ? "—" : restartLabel(spec.restart()));
+		layoutRows(job);
 
 		// Every job is actionable; editing/removing a foreign one is confirmed by the controller.
+		// A scheduled job has no "running" process to start/stop by hand — it runs on its schedule —
+		// so the run buttons stay disabled (Edit/Remove still apply).
 		final boolean running = status.state() == RunState.RUNNING;
-		startBtn.setEnabled(!running);
-		stopBtn.setEnabled(running);
-		restartBtn.setEnabled(running);
+		final boolean scheduled = job.scheduled();
+		startBtn.setEnabled(!scheduled && !running);
+		stopBtn.setEnabled(!scheduled && running);
+		restartBtn.setEnabled(!scheduled && running);
 		editBtn.setEnabled(true);
 		removeBtn.setEnabled(true);
 		((CardLayout) getLayout()).show(this, DETAIL);
 	}
 
-	private static String statusText(final ServiceStatus status) {
-		final String base = StatusVisuals.label(status.state());
+	/** Rebuild the property rows for this job: scheduled jobs show schedule + run times. */
+	private void layoutRows(final Job job) {
+		final ServiceSpec spec = job.spec();
+		grid.removeAll();
+		addRow(grid, 0, "Status", statusValue);
+		addRow(grid, 1, "Command", commandValue);
+		addRow(grid, 2, "Folder", folderValue);
+		if (job.scheduled()) {
+			scheduleValue.setText(ScheduleText.summary(job.schedule()));
+			nextRunValue.setText(ScheduleText.runTime(job.status().nextRun()));
+			lastRunValue.setText(ScheduleText.runTime(job.status().lastRun()));
+			addRow(grid, 3, "Schedule", scheduleValue);
+			addRow(grid, 4, "Next run", nextRunValue);
+			addRow(grid, 5, "Last run", lastRunValue);
+		} else {
+			autoStartValue.setText(job.status().enabled() ? "Yes" : "No");
+			restartValue.setText(spec == null ? "—" : restartLabel(spec.restart()));
+			addRow(grid, 3, "Start automatically", autoStartValue);
+			addRow(grid, 4, "If it stops", restartValue);
+		}
+		grid.revalidate();
+		grid.repaint();
+	}
+
+	private static String statusText(final Job job) {
+		final ServiceStatus status = job.status();
+		final String base = StatusVisuals.label(job);
 		if (status.pid() != null) {
 			return base + "  (pid " + status.pid() + ")";
 		}

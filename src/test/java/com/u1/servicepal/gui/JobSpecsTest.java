@@ -1,13 +1,17 @@
 package com.u1.servicepal.gui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.u1.servicepal.Capabilities;
 import com.u1.servicepal.Installation;
+import com.u1.servicepal.model.CalendarSchedule;
 import com.u1.servicepal.model.RestartPolicy;
 import com.u1.servicepal.model.RunAs;
+import com.u1.servicepal.model.Schedule;
 import com.u1.servicepal.model.ServiceSpec;
 import java.nio.file.Path;
 import java.util.List;
@@ -99,5 +103,29 @@ class JobSpecsTest {
 	void tokenizeOfBlankIsEmpty() {
 		assertTrue(JobSpecs.tokenize("   ").isEmpty());
 		assertTrue(JobSpecs.tokenize(null).isEmpty());
+	}
+
+	@Test
+	void scheduledFormSetsScheduleAndNormalizesKeepRunningFields() {
+		// The form's autoStart/restart are deliberately "keep running" values; a scheduled job must
+		// ignore them (and avoid the builder's schedule + ALWAYS guard) — it is a oneshot on a timer.
+		final ServiceSpec spec = JobSpecs.fromForm(
+				new JobForm(null, "Backup", "/usr/bin/backup", "--nightly", "", true,
+						RestartPolicy.ALWAYS, Schedule.dailyAt(3, 30)), PER_USER);
+
+		final CalendarSchedule schedule = assertInstanceOf(CalendarSchedule.class, spec.schedule());
+		assertEquals(Integer.valueOf(3), schedule.spec().hour());
+		assertEquals(Integer.valueOf(30), schedule.spec().minute());
+		assertFalse(spec.autoStart(), "a scheduled job does not run at load");
+		assertEquals(RestartPolicy.NEVER, spec.restart(), "scheduled jobs are oneshot (NEVER)");
+	}
+
+	@Test
+	void keptRunningFormHasNoSchedule() {
+		final ServiceSpec spec = JobSpecs.fromForm(
+				new JobForm(null, "X", "/bin/true", "", "", true, RestartPolicy.ALWAYS), PER_USER);
+
+		assertNull(spec.schedule());
+		assertTrue(spec.autoStart());
 	}
 }

@@ -7,18 +7,19 @@ and hides every platform-specific capability the library otherwise offers.
 ## Scope
 
 **In:** see your background jobs and whether each is running; add a job (name + command, optional
-working folder); choose *start automatically* and *what to do if it stops*; start / stop / restart;
-remove. The list shows **every service the platform can discover** (`list()`), split into up to three
-sections: **“Created with ServicePal”**, **“Adopted by ServicePal”** (services it installed over but
-did not originally create), and **“Other background jobs”** (everything else found on the machine).
-On macOS that last group is the third-party launchd agents/daemons in `~/Library/LaunchAgents` and
-`/Library/Launch*`, not Apple’s hundreds of services under `/System/Library` (which the backend never
-touches).
+working folder); choose between **keep it running** (*start automatically* + *what to do if it
+stops*) and **on a schedule** (a simple Repeat picker — every-N-minutes / daily / weekly); start /
+stop / restart; remove. The list shows **every service the platform can discover** (`list()`), split
+into up to three sections: **“Created with ServicePal”**, **“Adopted by ServicePal”** (services it
+installed over but did not originally create), and **“Other background jobs”** (everything else found
+on the machine). On macOS that last group is the third-party launchd agents/daemons in
+`~/Library/LaunchAgents` and `/Library/Launch*`, not Apple’s hundreds of services under
+`/System/Library` (which the backend never touches).
 
-**Deliberately out (hidden):** schedules (calendar / interval), `RunAs` named-user / system-daemon
-selection, the per-platform option blocks (`.mac()/.systemd()/.windows()/.openrc()`), explicit
-`Installation` choice, env vars and log-file paths (a later "Advanced" disclosure). The UI is
-**identical on all four platforms**; only the native window chrome differs.
+**Deliberately out (hidden):** `RunAs` named-user / system-daemon selection, the per-platform option
+blocks (`.mac()/.systemd()/.windows()/.openrc()`), explicit `Installation` choice, env vars and
+log-file paths (a later "Advanced" disclosure). The UI is **identical on all four platforms**; only
+the native window chrome differs.
 
 ## Three categories, and the adoption marker
 
@@ -57,6 +58,43 @@ the platform's `capabilities()`:
 
 This keeps the UI uniform and avoids privilege prompts on the platforms that don't need them. When a
 privileged op fails, the controller shows a friendly "run as administrator / with sudo" hint.
+
+## Scheduling: keep-running vs on-a-schedule
+
+The add/edit form has a **mode toggle** — *Keep it running* vs *On a schedule*. The two modes are
+mutually exclusive and swap the lower half of the form (a `CardLayout` in `JobFormPanel`):
+
+- **Keep it running** (a daemon): the existing *Start automatically* + *If it stops* (`RestartPolicy`)
+  fields.
+- **On a schedule** (`SchedulePanel`): a **Repeat** picker — *Every N minutes* (a dropdown of
+  `5/10/15/20/30`), *Daily at HH:MM*, or *Weekly on <day> at HH:MM* — that maps to a
+  `Schedule` (`IntervalSchedule` / `CalendarSchedule`). The minute options are all divisors of 60 so
+  every choice round-trips on **all four** backends (launchd `StartCalendarInterval`/`StartInterval`,
+  systemd `.timer`, the OpenRC cron fallback — which can only express intervals dividing a minute/hour
+  — and Windows Task Scheduler). The toggle is shown only where `capabilities().calendarSchedule()`
+  or `intervalSchedule()` is true (all current platforms; it hides on a future backend that can't
+  schedule).
+
+`JobSpecs.fromForm` carries the picked `Schedule` onto the `ServiceSpec` and normalizes the
+keep-running fields a scheduled job can't use — `autoStart=false` and `restart=NEVER` (a scheduled
+run is a oneshot, and the builder forbids `schedule` + `RestartPolicy.ALWAYS`).
+
+**Arming, not starting.** Saving a scheduled job installs it and then *arms* it via
+`JobsController.applySave` → `enable` (which persists the schedule on every platform: a systemd
+`.timer` symlink, an OpenRC crontab entry, a Windows task enabled, a launchd plist loaded) —
+**never** `start`, because a scheduled job runs on its schedule, not now. A systemd `.timer`
+additionally needs an explicit `restart` to activate in the current session and to pick up an edited
+schedule; that restarts the **timer**, not the job (on the other platforms `enable` already armed it
+and a "start"/"run" would execute the command immediately, so we don't).
+
+**Showing a schedule.** A scheduled job has no long-running process, so its raw run state is
+STOPPED/UNKNOWN between runs; `StatusVisuals` relabels that as **“Scheduled”** (a calm blue) in both
+the list's status column and the detail header — but a job that is genuinely mid-run reads “Running”
+and a failed run reads “Failed”. The detail panel swaps the *Start automatically* / *If it stops*
+rows for **Schedule** (a human summary like “Daily at 02:00”, via `ScheduleText`), **Next run**, and
+**Last run** (`ServiceStatus.nextRun()` / `lastRun()` — Windows and systemd give both; OpenRC/cron
+computes next-run only; launchd exposes neither, so those read “—”). The run buttons are disabled for
+a scheduled job (Edit/Remove still apply).
 
 ## Toolkit: Swing, with FlatLaf on macOS
 
@@ -106,10 +144,11 @@ The GUI depends only on the `ServiceManager` **interface**, which makes it drive
 | `MainWindow` | The `JFrame` shell; hosts the controller's content. |
 | `JobsController` | Presenter: owns toolbar + list + detail + status bar, implements `JobActions`, runs every library call off the EDT on a `SwingWorker`, refreshes, and surfaces errors. |
 | `JobListPanel` / `JobTableModel` | Master list with status dots + state. |
-| `JobDetailPanel` | Selected job's properties, live status, action buttons. |
-| `JobFormPanel` / `JobDialog` | The add/edit form (reused, modeless, by the screenshot harness). |
-| `JobForm` / `JobSpecs` | Pure, display-free form ⇄ `ServiceSpec` mapping + the auto privilege model (unit-tested headless). |
-| `Job` / `StatusVisuals` / `CircleIcon` | View-model (spec + status) and status colors/labels/dots. |
+| `JobDetailPanel` | Selected job's properties, live status, action buttons; swaps daemon rows for Schedule / Next run / Last run on a scheduled job. |
+| `JobFormPanel` / `JobDialog` | The add/edit form (reused, modeless, by the screenshot harness), with the keep-running ↔ on-a-schedule mode toggle. |
+| `SchedulePanel` / `ScheduleText` | The Repeat picker (every-N / daily / weekly ⇄ `Schedule`) and the human-readable schedule/run-time formatting (both unit-tested headless). |
+| `JobForm` / `JobSpecs` | Pure, display-free form ⇄ `ServiceSpec` mapping + the auto privilege model and schedule normalization (unit-tested headless). |
+| `Job` / `StatusVisuals` / `CircleIcon` | View-model (spec + status, incl. `scheduled()`) and status colors/labels/dots (incl. the "Scheduled" relabel). |
 | `DemoServiceManager` / `DemoData` | In-memory `ServiceManager` + seeded representative jobs for demos, screenshots, and tests. |
 
 All library calls run on a `SwingWorker` (the backends shell out to `launchctl` / `systemctl` /
@@ -120,7 +159,8 @@ All library calls run on a `SwingWorker` (the backends shell out to `launchctl` 
 | Action | Library call |
 |--------|--------------|
 | Load list | `list()` (all discovered) + `read(id, installation)` per row; grouped by `ServiceStatus.managed()` / `adopted()` into created / adopted / other |
-| Save (new/edit) | `JobSpecs.fromForm` → `install(spec, overwriteUnmanaged)` (`overwriteUnmanaged` true only when editing a foreign job — adopts it, after a warning); then `enable` + `start` (or **`restart`** if a running job's runtime fields changed — `JobsController.applySave`/`runtimeChanged`), else `disable` |
+| Save (keep-running) | `JobSpecs.fromForm` → `install(spec, overwriteUnmanaged)` (`overwriteUnmanaged` true only when editing a foreign job — adopts it, after a warning); then `enable` + `start` (or **`restart`** if a running job's runtime fields changed — `JobsController.applySave`/`runtimeChanged`), else `disable` |
+| Save (scheduled) | `install(spec, overwriteUnmanaged)` → **`enable`** to arm the schedule (no `start`); a systemd `.timer` also gets a `restart` to activate now / pick up an edited schedule |
 | Start / Stop / Restart | `start` / `stop` / `restart(id)` (any job) |
 | Remove | `uninstall(id, foreign)` (with confirmation; `foreign` passes the unmanaged override) |
 | Badge / privilege model | `platform()` / `capabilities()` |
@@ -138,7 +178,9 @@ title bars are not part of the capture (the root pane is) — the widgets are wh
 `.github/workflows/gui-screenshots.yml`:
 
 - **demo** (ubuntu / macOS / Windows): seeded `DemoServiceManager`, deterministic, no OS changes —
-  captures `main-<tag>.png` and `add-job-<tag>.png`. This is the layout/look review.
+  captures `main-<tag>.png` (incl. a scheduled "Database Snapshot" row), `add-job-<tag>.png`
+  (keep-running mode), and `add-job-scheduled-<tag>.png` (the Repeat picker). This is the
+  layout/look review.
 - **live** (macOS / Windows, non-blocking): the real backend installs + starts a throwaway job,
   screenshots it actually running (`live-<tag>.png`), then uninstalls. End-to-end proof; the real
   lifecycle is already gated by `ci.yml`, so this never blocks. macOS uses a per-user agent (no
@@ -149,6 +191,7 @@ Screenshots are uploaded as workflow artifacts for download and review.
 
 ## Deferred (future)
 
-An "Advanced" disclosure (env vars, log-file paths); richer restart/keep-alive options; surfacing
-schedules. None are needed for the common case this GUI targets. (Showing — and now controlling — all
-discovered services, including ones we adopt, is implemented; see the categories section above.)
+An "Advanced" disclosure (env vars, log-file paths); richer restart/keep-alive options; richer
+schedule shapes (monthly, every-N-hours, arbitrary cron). None are needed for the common case this
+GUI targets. (Showing — and now controlling — all discovered services, including ones we adopt, and
+both keep-running and scheduled jobs, is implemented; see the sections above.)

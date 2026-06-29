@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.u1.servicepal.Capabilities;
 import com.u1.servicepal.Platform;
 import com.u1.servicepal.model.RunState;
+import com.u1.servicepal.model.Schedule;
 import com.u1.servicepal.model.ServiceSpec;
 import java.nio.file.Path;
 import java.util.List;
@@ -24,6 +25,10 @@ class JobsControllerTest {
 
 	private static ServiceSpec spec(final String id, final String command) {
 		return ServiceSpec.builder().id(id).command(command).build();
+	}
+
+	private static ServiceSpec scheduledSpec(final String id) {
+		return ServiceSpec.builder().id(id).command("/bin/x").schedule(Schedule.dailyAt(3, 30)).build();
 	}
 
 	@Test
@@ -77,6 +82,24 @@ class JobsControllerTest {
 	}
 
 	@Test
+	void schedulingANewJobArmsItWithoutStartingItNow() {
+		// macOS: install bootstraps the plist (with the calendar trigger), enable persists it. No
+		// "start" — a scheduled job runs on its schedule, not now.
+		final DemoServiceManager mgr = new DemoServiceManager(Platform.MACOS_LAUNCHD, CAPS);
+		JobsController.applySave(mgr, null, scheduledSpec("a"), false, false, false);
+		assertEquals(List.of("install a", "enable a"), mgr.calls);
+	}
+
+	@Test
+	void schedulingOnSystemdAlsoRestartsTheTimerToArmIt() {
+		// systemd's .timer needs an explicit (re)start to activate in the current session and to pick
+		// up an edited schedule — this restarts the *timer*, not the job.
+		final DemoServiceManager mgr = new DemoServiceManager(Platform.LINUX_SYSTEMD, CAPS);
+		JobsController.applySave(mgr, null, scheduledSpec("a"), false, false, false);
+		assertEquals(List.of("install a", "enable a", "restart a"), mgr.calls);
+	}
+
+	@Test
 	void runtimeChangedTracksRuntimeFieldsNotTheDisplayName() {
 		final ServiceSpec base = ServiceSpec.builder().id("a").displayName("X").command("/bin/x").build();
 		assertTrue(JobsController.runtimeChanged(null, base), "a brand-new job counts as changed");
@@ -86,5 +109,8 @@ class JobsControllerTest {
 		assertTrue(JobsController.runtimeChanged(base, base.toBuilder().command("/bin/y").build()));
 		assertTrue(JobsController.runtimeChanged(base,
 				base.toBuilder().workingDirectory(Path.of("/tmp")).build()));
+		assertTrue(JobsController.runtimeChanged(base,
+				base.toBuilder().schedule(com.u1.servicepal.model.Schedule.dailyAt(1, 0)).build()),
+				"adding a schedule is a runtime change");
 	}
 }
