@@ -1,7 +1,9 @@
 package com.u1.servicepal.internal.windows;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.u1.servicepal.model.RestartPolicy;
 import com.u1.servicepal.model.Schedule;
 import com.u1.servicepal.model.ServiceSpec;
 import java.time.DayOfWeek;
@@ -85,5 +87,43 @@ class TaskXmlWriterTest {
 		final String xml = writer.render(base().schedule(Schedule.every(Duration.ofMinutes(90)))
 				.build());
 		assertTrue(xml.contains("<Interval>PT1H30M</Interval>"));
+	}
+
+	// --- per-user (current-user) tasks ---
+
+	private static ServiceSpec.Builder perUser() {
+		return ServiceSpec.builder()
+				.id("com.example.job")
+				.displayName("Acme Job")
+				.command("C:\\app\\job.exe", "--run")
+				.asCurrentUser();
+	}
+
+	@Test
+	void perUserKeepRunningRendersLogonTriggerAsTheCurrentUser() {
+		final String xml = writer.render(
+				perUser().restart(RestartPolicy.ON_FAILURE).build(), "TESTPC\\tester");
+		assertTrue(xml.contains("<LogonTrigger>"), "keep-running per-user => start at logon");
+		assertTrue(xml.contains("<UserId>TESTPC\\tester</UserId>"));
+		assertTrue(xml.contains("<LogonType>InteractiveToken</LogonType>"));
+		assertTrue(xml.contains("<RunLevel>LeastPrivilege</RunLevel>"), "no admin");
+		assertTrue(xml.contains("<RestartOnFailure>"), "ON_FAILURE => restart-on-failure");
+		assertFalse(xml.contains("<CalendarTrigger>"));
+	}
+
+	@Test
+	void perUserScheduledRendersTimeTriggerWithInteractiveToken() {
+		final String xml = writer.render(
+				perUser().schedule(Schedule.dailyAt(3, 30)).build(), "TESTPC\\tester");
+		assertTrue(xml.contains("<CalendarTrigger>"), "a scheduled per-user job keeps its trigger");
+		assertFalse(xml.contains("<LogonTrigger>"));
+		assertTrue(xml.contains("<LogonType>InteractiveToken</LogonType>"));
+	}
+
+	@Test
+	void keepRunningWithNeverRestartHasNoRestartOnFailure() {
+		final String xml = writer.render(
+				perUser().restart(RestartPolicy.NEVER).build(), "TESTPC\\tester");
+		assertFalse(xml.contains("<RestartOnFailure>"), "NEVER => no auto-restart");
 	}
 }

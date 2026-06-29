@@ -131,7 +131,7 @@ you opt in with the explicit `install(spec, true)` / `uninstall(id, true)` overl
 
 | Capability | macOS | systemd | OpenRC | Windows |
 |------------|:-----:|:-------:|:------:|:-------:|
-| Per-user services | ✅ | ✅ | — | — |
+| Per-user services | ✅ | ✅ | — | ✅² |
 | System-wide services | ✅ | ✅ | ✅ | ✅ |
 | Run as a named user | ✅ | ✅ | ✅ | ✅ |
 | Scheduled jobs (calendar / interval) | ✅ | ✅ | ✅¹ | ✅ |
@@ -140,10 +140,14 @@ you opt in with the explicit `install(spec, true)` / `uninstall(id, true)` overl
 
 Query the exact feature set of the running platform with `services.capabilities()`.
 
-On Windows, a long-running daemon becomes a real Windows service whose executable is a
+On Windows, a system-wide long-running daemon becomes a real Windows service whose executable is a
 bundled pure-Java FFM **service host** — it speaks the SCM control protocol and supervises
 your command (a plain `java -jar` run as a service cannot, and fails with error 1053). A
 *scheduled* job is routed to **Task Scheduler** instead, where it runs your command directly.
+² A **per-user** Windows job (no admin) is a current-user **Task Scheduler** task — a logon trigger
+for a keep-running job, a time trigger for a scheduled one — running as you (InteractiveToken, least
+privilege). Keep-alive there is best-effort (Task Scheduler restart-on-failure), so `ALWAYS` behaves
+like `ON_FAILURE`.
 
 Scheduling is mapped to each platform's native facility: launchd `StartCalendarInterval` /
 `StartInterval`, a systemd `.timer` + oneshot `.service` pair (`OnCalendar` / `OnUnitActiveSec`),
@@ -154,9 +158,11 @@ calendar schedules map directly, but an interval must divide a minute or an hour
 
 - **OpenRC** is system-wide only; its supervised restart respawns on any exit, so `ON_FAILURE`
   and `ALWAYS` behave identically.
-- **Windows** is system-wide only. Discovery is machine-wide (it enumerates every Win32 service
-  via `EnumServicesStatusExW`), but foreign services show their service key name — ServicePal-created
-  services and tasks carry the friendly display name.
+- **Windows** per-user jobs are Task Scheduler tasks (no admin), not real services; a real
+  *service* (the FFM host) still needs a system-wide install (admin). Discovery is machine-wide for
+  services — it enumerates every Win32 service via `EnumServicesStatusExW`, though foreign ones show
+  their service key name rather than the friendly display name — while per-user discovery is scoped
+  to the tasks ServicePal created.
 
 ## Command-line tools
 

@@ -3,6 +3,7 @@ package com.u1.servicepal.internal.windows;
 import com.u1.servicepal.model.CalendarSchedule;
 import com.u1.servicepal.model.CalendarSpec;
 import com.u1.servicepal.model.IntervalSchedule;
+import com.u1.servicepal.model.RestartPolicy;
 import com.u1.servicepal.model.RunAs;
 import com.u1.servicepal.model.Schedule;
 import com.u1.servicepal.model.ServiceSpec;
@@ -20,6 +21,17 @@ public final class TaskXmlWriter {
 	private static final String LOCAL_SYSTEM_SID = "S-1-5-18";
 
 	public String render(final ServiceSpec spec) {
+		return render(spec, null);
+	}
+
+	/**
+	 * Render the task. {@code currentUser} (e.g. {@code DOMAIN\\user}) is the account a
+	 * <em>per-user</em> (current-user) task runs as: when it is non-null and the spec's
+	 * {@link RunAs} is {@code CURRENT_USER}, the task runs with an {@code InteractiveToken} at
+	 * {@code LeastPrivilege} (no admin). A <em>keep-running</em> job (no schedule) gets a
+	 * {@code LogonTrigger}; a scheduled job gets its calendar/time trigger.
+	 */
+	public String render(final ServiceSpec spec, final String currentUser) {
 		final Schedule schedule = spec.schedule();
 		final StringBuilder sb = new StringBuilder();
 		sb.append("<?xml version=\"1.0\" encoding=\"UTF-16\"?>\n");
@@ -31,12 +43,24 @@ public final class TaskXmlWriter {
 		sb.append("\t</RegistrationInfo>\n");
 
 		sb.append("\t<Triggers>\n");
-		appendTrigger(sb, schedule);
+		if (schedule != null) {
+			appendTrigger(sb, schedule);
+		} else {
+			appendLogonTrigger(sb, spec.runAs(), currentUser);   // keep-running: start at logon
+		}
 		sb.append("\t</Triggers>\n");
 
-		appendPrincipal(sb, spec.runAs());
+		appendPrincipal(sb, spec.runAs(), currentUser);
 
 		sb.append("\t<Settings>\n");
+		// A keep-running job approximates keep-alive via Task Scheduler's restart-on-failure. There
+		// is no native "restart on any exit", so ALWAYS behaves like ON_FAILURE here (documented).
+		if (schedule == null && spec.restart() != RestartPolicy.NEVER) {
+			sb.append("\t\t<RestartOnFailure>\n");
+			sb.append("\t\t\t<Interval>PT1M</Interval>\n");
+			sb.append("\t\t\t<Count>999</Count>\n");
+			sb.append("\t\t</RestartOnFailure>\n");
+		}
 		sb.append("\t\t<Enabled>").append(spec.autoStart()).append("</Enabled>\n");
 		sb.append("\t\t<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\n");
 		// "run if missed" — fire on next availability if the scheduled time was missed.
@@ -104,19 +128,51 @@ public final class TaskXmlWriter {
 		sb.append("\t\t</CalendarTrigger>\n");
 	}
 
-	private void appendPrincipal(final StringBuilder sb, final RunAs runAs) {
+	private void appendPrincipal(final StringBuilder sb, final RunAs runAs, final String currentUser) {
 		sb.append("\t<Principals>\n");
 		sb.append("\t\t<Principal id=\"Author\">\n");
 		if (runAs.kind() == RunAs.Kind.NAMED_USER) {
 			sb.append("\t\t\t<UserId>").append(xml(runAs.userName())).append("</UserId>\n");
 			sb.append("\t\t\t<LogonType>Password</LogonType>\n");
+			sb.append("\t\t\t<RunLevel>HighestAvailable</RunLevel>\n");
+		} else if (runAs.kind() == RunAs.Kind.CURRENT_USER && hasText(currentUser)) {
+			// Per-user: run as the current interactive user, no admin.
+			sb.append("\t\t\t<UserId>").append(xml(currentUser)).append("</UserId>\n");
+			sb.append("\t\t\t<LogonType>InteractiveToken</LogonType>\n");
+			sb.append("\t\t\t<RunLevel>LeastPrivilege</RunLevel>\n");
 		} else {
-			// System daemon (and the fail-fast-guarded current-user case): run as LocalSystem.
+			// System daemon (or current-user with no resolved account): run as LocalSystem.
 			sb.append("\t\t\t<UserId>").append(LOCAL_SYSTEM_SID).append("</UserId>\n");
+			sb.append("\t\t\t<RunLevel>HighestAvailable</RunLevel>\n");
 		}
-		sb.append("\t\t\t<RunLevel>HighestAvailable</RunLevel>\n");
 		sb.append("\t\t</Principal>\n");
 		sb.append("\t</Principals>\n");
+	}
+
+	/** A LogonTrigger for a keep-running task: fire at the user's logon (or any logon for a daemon). */
+	private void appendLogonTrigger(final StringBuilder sb, final RunAs runAs,
+			final String currentUser) {
+		sb.append("\t\t<LogonTrigger>\n");
+		sb.append("\t\t\t<Enabled>true</Enabled>\n");
+		final String user = triggerUser(runAs, currentUser);
+		if (user != null) {
+			sb.append("\t\t\t<UserId>").append(xml(user)).append("</UserId>\n");
+		}
+		sb.append("\t\t</LogonTrigger>\n");
+	}
+
+	private static String triggerUser(final RunAs runAs, final String currentUser) {
+		if (runAs.kind() == RunAs.Kind.NAMED_USER) {
+			return runAs.userName();
+		}
+		if (runAs.kind() == RunAs.Kind.CURRENT_USER && hasText(currentUser)) {
+			return currentUser;
+		}
+		return null;   // any-user logon
+	}
+
+	private static boolean hasText(final String s) {
+		return s != null && !s.isBlank();
 	}
 
 	private static String argumentsOf(final ServiceSpec spec) {

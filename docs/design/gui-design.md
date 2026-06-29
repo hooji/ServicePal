@@ -52,10 +52,13 @@ section too, by their service key name.)
 The GUI never mentions `RunAs` or `Installation`. Instead `JobSpecs.fromForm` picks identity from
 the platform's `capabilities()`:
 
-- `perUserInstall` supported (macOS, systemd) → `asCurrentUser()` → **per-user**, no admin needed,
-  auto-starts at login.
-- otherwise (Windows, OpenRC — system-wide only) → `asSystemDaemon()` → **system-wide**, auto-starts
-  at boot, needs the app to run elevated (admin / sudo).
+- `perUserInstall` supported (macOS, systemd, Windows) → `asCurrentUser()` → **per-user**, no admin
+  needed, auto-starts at login. On Windows this is a current-user **Task Scheduler** task (a logon
+  trigger for keep-running, a time trigger for scheduled), not a real service — so the GUI no longer
+  needs admin on Windows for the common case.
+- otherwise (OpenRC — system-wide only) → `asSystemDaemon()` → **system-wide**, auto-starts at boot,
+  needs the app to run elevated (sudo). A real Windows *service* (the FFM host) is also available
+  this way when a job is explicitly set up system-wide.
 
 This keeps the UI uniform and avoids privilege prompts on the platforms that don't need them. When a
 privileged op fails, the controller shows a friendly "run as administrator / with sudo" hint.

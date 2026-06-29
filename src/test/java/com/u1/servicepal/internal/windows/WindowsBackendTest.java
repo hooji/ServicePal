@@ -9,8 +9,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.u1.servicepal.Installation;
 import com.u1.servicepal.UnmanagedServiceException;
-import com.u1.servicepal.UnsupportedFeatureException;
 import com.u1.servicepal.model.Discovery;
+import com.u1.servicepal.model.RestartPolicy;
 import com.u1.servicepal.model.RunAs;
 import com.u1.servicepal.model.RunState;
 import com.u1.servicepal.model.Schedule;
@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -30,18 +31,23 @@ class WindowsBackendTest {
 	private static final String ID = "com.u1.servicepal.test.svc";
 	private static final String JAVAW = "C:\\jdk\\bin\\javaw.exe";
 	private static final String JAR = "C:\\app\\servicepal.jar";
+	private static final String CURRENT_USER = "TESTPC\\tester";
 
-	private Path sidecarDir;
+	private Path systemDir;
+	private Path perUserDir;
 	private RecordingScm scm;
 	private RecordingTaskScheduler tasks;
 	private WindowsBackend backend;
 
 	@BeforeEach
 	void setUp(@TempDir final Path tmp) {
-		sidecarDir = tmp.resolve("ServicePal");
+		systemDir = tmp.resolve("ServicePal");
+		perUserDir = tmp.resolve("ServicePal-user");
 		scm = new RecordingScm();
 		tasks = new RecordingTaskScheduler();
-		backend = new WindowsBackend(scm, tasks, sidecarDir, JAVAW, JAR);
+		backend = new WindowsBackend(scm, tasks,
+				Map.of(Installation.SYSTEM_WIDE, systemDir, Installation.PER_USER, perUserDir),
+				JAVAW, JAR, CURRENT_USER);
 	}
 
 	private static ServiceSpec daemon() {
@@ -66,7 +72,7 @@ class WindowsBackendTest {
 	void installDaemonWritesSidecarAndCreatesService() throws IOException {
 		backend.install(daemon(), false);
 
-		final Path sidecar = sidecarDir.resolve(ID + ".json");
+		final Path sidecar = systemDir.resolve(ID + ".json");
 		assertTrue(Files.isRegularFile(sidecar));
 		assertTrue(Files.readString(sidecar).contains(SidecarReader.MANAGED_VALUE));
 		assertTrue(scm.services.contains(ID));
@@ -119,7 +125,7 @@ class WindowsBackendTest {
 		backend.install(daemon(), false);
 		backend.uninstall(ID, Installation.SYSTEM_WIDE, false);
 
-		assertFalse(Files.exists(sidecarDir.resolve(ID + ".json")));
+		assertFalse(Files.exists(systemDir.resolve(ID + ".json")));
 		assertTrue(scm.calls.contains("stop " + ID));
 		assertTrue(scm.calls.contains("delete " + ID));
 	}
@@ -172,7 +178,7 @@ class WindowsBackendTest {
 		scm.services.add(ID);   // a pre-existing service we didn't create (no sidecar)
 		assertThrows(UnmanagedServiceException.class, () -> backend.install(daemon(), false));
 		backend.install(daemon(), true);   // allowed with the override
-		assertTrue(Files.exists(sidecarDir.resolve(ID + ".json")));
+		assertTrue(Files.exists(systemDir.resolve(ID + ".json")));
 	}
 
 	@Test
@@ -180,7 +186,7 @@ class WindowsBackendTest {
 		scm.services.add(ID);   // a pre-existing service we didn't create (no sidecar)
 		backend.install(daemon(), true);   // adopt (override required)
 
-		assertTrue(Files.readString(sidecarDir.resolve(ID + ".json")).contains(SidecarReader.ADOPTED_KEY));
+		assertTrue(Files.readString(systemDir.resolve(ID + ".json")).contains(SidecarReader.ADOPTED_KEY));
 		final ServiceStatus s = backend.status(ID, Installation.SYSTEM_WIDE);
 		assertTrue(s.managed());
 		assertTrue(s.adopted());
@@ -194,11 +200,110 @@ class WindowsBackendTest {
 		assertFalse(s.adopted());
 	}
 
+	// --- per-user jobs (current-user Task Scheduler tasks, no admin) ---
+
+	private static ServiceSpec perUserKeepRunning() {
+		return ServiceSpec.builder()
+				.id(ID).command("C:\\app\\app.exe", "--run")
+				.asCurrentUser().autoStart(true).restart(RestartPolicy.ON_FAILURE).build();
+	}
+
+	private static ServiceSpec perUserScheduled() {
+		return ServiceSpec.builder()
+				.id(ID).command("C:\\app\\app.exe")
+				.asCurrentUser().schedule(Schedule.dailyAt(3, 0)).build();
+	}
+
 	@Test
-	void perUserInstallFailsFast() {
-		final ServiceSpec perUser = ServiceSpec.builder()
-				.id(ID).command("C:\\app\\api.exe").asCurrentUser().build();
-		assertThrows(UnsupportedFeatureException.class, () -> backend.install(perUser, false));
+	void capabilitiesNowAllowPerUser() {
+		assertTrue(backend.capabilities().perUserInstall());
+		assertTrue(backend.supportedInstallations().contains(Installation.PER_USER));
+	}
+
+	@Test
+	void perUserKeepRunningInstallsACurrentUserLogonTask() {
+		backend.install(perUserKeepRunning(), false);
+
+		assertTrue(tasks.tasks.contains(ID), "a per-user job is a Task Scheduler task, not a service");
+		assertFalse(scm.services.contains(ID), "no SCM service (no admin) for a per-user job");
+		assertTrue(tasks.lastXml.contains("<LogonTrigger>"), "keep-running per-user => start at logon");
+		assertTrue(tasks.lastXml.contains("<LogonType>InteractiveToken</LogonType>"));
+		assertTrue(tasks.lastXml.contains("<RunLevel>LeastPrivilege</RunLevel>"), "no admin");
+		assertTrue(tasks.lastXml.contains(CURRENT_USER), "runs as the current user");
+		assertTrue(tasks.lastXml.contains("<RestartOnFailure>"), "ON_FAILURE => restart-on-failure");
+		assertNull(tasks.lastAccount, "the XML principal defines the account; no /ru");
+		// The sidecar lives in the per-user directory, not the system one.
+		assertTrue(Files.isRegularFile(perUserDir.resolve(ID + ".json")));
+		assertFalse(Files.exists(systemDir.resolve(ID + ".json")));
+	}
+
+	@Test
+	void perUserScheduledInstallsACurrentUserTimeTask() {
+		backend.install(perUserScheduled(), false);
+
+		assertTrue(tasks.lastXml.contains("<CalendarTrigger>"), "a scheduled per-user job keeps its trigger");
+		assertTrue(tasks.lastXml.contains("<LogonType>InteractiveToken</LogonType>"));
+		assertTrue(Files.isRegularFile(perUserDir.resolve(ID + ".json")));
+	}
+
+	@Test
+	void perUserJobResolvesUnderPerUserOnly() {
+		backend.install(perUserKeepRunning(), false);
+		tasks.running = true;
+
+		final ServiceStatus perUser = backend.status(ID, Installation.PER_USER);
+		assertNotNull(perUser);
+		assertEquals(Installation.PER_USER, perUser.installation());
+		assertEquals(RunState.RUNNING, perUser.state());
+		assertNull(backend.status(ID, Installation.SYSTEM_WIDE),
+				"a per-user task must not also resolve as a system-wide service (no ambiguity)");
+	}
+
+	@Test
+	void perUserLifecycleRoutesToTaskScheduler() {
+		backend.install(perUserKeepRunning(), false);
+		backend.start(ID, Installation.PER_USER);
+		backend.stop(ID, Installation.PER_USER);
+		backend.enable(ID, Installation.PER_USER);
+		backend.disable(ID, Installation.PER_USER);
+
+		assertTrue(tasks.calls.contains("run " + ID));
+		assertTrue(tasks.calls.contains("end " + ID));
+		assertTrue(tasks.calls.contains("setEnabled " + ID + " true"));
+		assertTrue(tasks.calls.contains("setEnabled " + ID + " false"));
+		assertTrue(scm.calls.isEmpty(), "no SCM calls for a per-user job");
+	}
+
+	@Test
+	void perUserDiscoveryListsOnlyOurTasks() {
+		backend.install(perUserKeepRunning(), false);
+		final Discovery perUser = backend.discover(Installation.PER_USER);
+		assertEquals(1, perUser.services().size());
+		assertEquals(ID, perUser.services().get(0).id());
+		assertTrue(perUser.services().get(0).managed());
+		// The per-user job does not show up in the system-wide discovery.
+		for (final ServiceStatus s : backend.discover(Installation.SYSTEM_WIDE).services()) {
+			assertFalse(ID.equals(s.id()), "a per-user task is not a system-wide service");
+		}
+	}
+
+	@Test
+	void perUserUninstallRemovesTaskAndSidecar() {
+		backend.install(perUserKeepRunning(), false);
+		backend.uninstall(ID, Installation.PER_USER, false);
+
+		assertFalse(tasks.tasks.contains(ID));
+		assertFalse(Files.exists(perUserDir.resolve(ID + ".json")));
+	}
+
+	@Test
+	void readRoundTripsAPerUserJob() {
+		backend.install(perUserKeepRunning(), false);
+		final ServiceSpec back = backend.read(ID, Installation.PER_USER);
+		assertNotNull(back);
+		assertEquals(RunAs.Kind.CURRENT_USER, back.runAs().kind());
+		assertEquals(List.of("C:\\app\\app.exe", "--run"), back.command());
+		assertNull(back.schedule(), "a keep-running per-user job has no schedule");
 	}
 
 	@Test

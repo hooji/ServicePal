@@ -39,10 +39,13 @@ import java.util.Set;
  * — the host reads it to learn the real command, {@code read()} reconstructs the spec from it,
  * its presence is the managed-by marker, and its {@code kind} field routes by-id operations.
  *
- * <p>SYSTEM_WIDE-only in v1 (no per-user services; {@code perUserInstall} is false). Discovery
- * lists the services/tasks ServicePal manages (from their sidecars) <em>and</em> every other Win32
- * service on the machine ({@code EnumServicesStatusExW}, surfaced as foreign/unmanaged), deduped by
- * the case-insensitive service name.
+ * <p><strong>Per-user</strong> jobs are supported as <em>current-user Task Scheduler tasks</em> (no
+ * admin): a keep-running job gets a logon trigger, a scheduled job its time trigger, both running as
+ * the current user (InteractiveToken, LeastPrivilege). Their sidecars live under
+ * {@code %LOCALAPPDATA%\ServicePal}. System-wide daemons remain real SCM services (the FFM host).
+ * Discovery lists the services/tasks ServicePal manages (from the relevant installation's sidecars)
+ * and, for SYSTEM_WIDE, every other Win32 service on the machine ({@code EnumServicesStatusExW},
+ * surfaced as foreign/unmanaged), deduped by the case-insensitive service name.
  *
  * <p>All native access is behind {@link Scm} (advapi32/FFM) and {@link TaskScheduler}
  * (schtasks), so this backend unit-tests off-Windows with stubs.
@@ -65,28 +68,47 @@ public final class WindowsBackend implements Backend {
 
 	private final Scm scm;
 	private final TaskScheduler taskScheduler;
-	private final Path sidecarDir;
+	private final Map<Installation, Path> sidecarDirs;
 	private final String javawExe;
 	private final String classpath;
+	private final String currentUser;
 	private final SidecarWriter writer = new SidecarWriter();
 	private final SidecarReader reader = new SidecarReader();
 	private final TaskXmlWriter taskXmlWriter = new TaskXmlWriter();
 
-	public WindowsBackend(final Scm scm, final TaskScheduler taskScheduler, final Path sidecarDir,
-			final String javawExe, final String classpath) {
+	public WindowsBackend(final Scm scm, final TaskScheduler taskScheduler,
+			final Map<Installation, Path> sidecarDirs, final String javawExe, final String classpath,
+			final String currentUser) {
 		this.scm = scm;
 		this.taskScheduler = taskScheduler;
-		this.sidecarDir = sidecarDir;
+		this.sidecarDirs = Map.copyOf(sidecarDirs);
 		this.javawExe = javawExe;
 		this.classpath = classpath;
+		this.currentUser = currentUser;
 	}
 
-	/** Real Windows wiring: FFM SCM, schtasks, %ProgramData% sidecars, this jar's host binPath. */
+	/**
+	 * Real Windows wiring: FFM SCM, schtasks, %ProgramData% (system) + %LOCALAPPDATA% (per-user)
+	 * sidecars, this jar's host binPath, and the current user (for per-user task principals).
+	 */
 	public static WindowsBackend createDefault() {
 		final String javaw = Path.of(System.getProperty("java.home", ""), "bin", "javaw.exe")
 				.toString();
+		final Map<Installation, Path> dirs = Map.of(
+				Installation.SYSTEM_WIDE, WindowsPaths.sidecarDir(),
+				Installation.PER_USER, WindowsPaths.perUserSidecarDir());
 		return new WindowsBackend(new FfmScm(), new SchtasksScheduler(new DefaultCommandRunner()),
-				WindowsPaths.sidecarDir(), javaw, resolveClasspath());
+				dirs, javaw, resolveClasspath(), resolveCurrentUser());
+	}
+
+	/** The current user as {@code DOMAIN\\user} (or a bare name), for a per-user task's principal. */
+	private static String resolveCurrentUser() {
+		final String domain = System.getenv("USERDOMAIN");
+		final String user = System.getenv("USERNAME");
+		if (user != null && !user.isBlank()) {
+			return domain != null && !domain.isBlank() ? domain + "\\" + user : user;
+		}
+		return System.getProperty("user.name", "");
 	}
 
 	@Override
@@ -96,34 +118,35 @@ public final class WindowsBackend implements Backend {
 
 	@Override
 	public Capabilities capabilities() {
-		// SYSTEM_WIDE-only (no per-user) and no conditional keep-alive; Task Scheduler gives
-		// calendar+interval; the host gives keep-alive + log redirection; QueryServiceStatusEx
-		// gives structured status.
-		return new Capabilities(false, true, true, true, true, true, false, true, true);
+		// Per-user (current-user Task Scheduler tasks, no admin) and system-wide both supported; no
+		// conditional keep-alive; Task Scheduler gives calendar+interval; the system host gives
+		// keep-alive + log redirection; QueryServiceStatusEx gives structured status.
+		return new Capabilities(true, true, true, true, true, true, false, true, true);
 	}
 
 	@Override
 	public List<Installation> supportedInstallations() {
-		return List.of(Installation.SYSTEM_WIDE);
+		return List.of(Installation.PER_USER, Installation.SYSTEM_WIDE);
 	}
 
 	@Override
 	public Discovery discover(final Installation installation) {
 		final List<ServiceStatus> services = new ArrayList<>();
 		final List<String> unreadable = new ArrayList<>();
-		if (installation != Installation.SYSTEM_WIDE) {
+		final Path dir = sidecarDirs.get(installation);
+		if (dir == null) {
 			return new Discovery(services, unreadable);
 		}
-		// 1. The services/tasks ServicePal manages, from their sidecars (these carry our markers,
-		//    auto-start state, and — for tasks — run times). Service names are case-insensitive on
-		//    Windows, so we dedup against the machine-wide pass by lower-cased name.
+		// 1. The services/tasks ServicePal manages in this installation, from their sidecars (these
+		//    carry our markers, auto-start state, and — for tasks — run times). Service names are
+		//    case-insensitive on Windows, so we dedup against the machine-wide pass by lower-cased name.
 		final Set<String> seen = new HashSet<>();
-		if (Files.isDirectory(sidecarDir)) {
-			try (DirectoryStream<Path> stream = Files.newDirectoryStream(sidecarDir, "*.json")) {
+		if (Files.isDirectory(dir)) {
+			try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir, "*.json")) {
 				for (final Path file : stream) {
 					final String id = stem(file);
 					try {
-						final ServiceStatus status = status(id, Installation.SYSTEM_WIDE);
+						final ServiceStatus status = status(id, installation);
 						if (status != null) {
 							services.add(status);
 							seen.add(id.toLowerCase(Locale.ROOT));
@@ -137,33 +160,36 @@ public final class WindowsBackend implements Backend {
 			}
 		}
 		// 2. Every other Win32 service on the machine (EnumServicesStatusExW) as a foreign (unmanaged)
-		//    entry, so the "other background jobs" view is populated on Windows too. A managed service
-		//    is also a real SCM service, so the lower-cased-name dedup keeps the sidecar entry (which
-		//    is the one that knows it's managed). A failed enumeration must not hide the managed ones.
-		try {
-			for (final ScmService entry : scm.enumerate()) {
-				if (seen.add(entry.name().toLowerCase(Locale.ROOT))) {
-					final ServiceControlStatus st = entry.status();
-					services.add(new ServiceStatus(entry.name(), Installation.SYSTEM_WIDE, true, false,
-							false, false, st.state(), st.pid(), st.lastExitCode(), null));
+		//    entry, so the "other background jobs" view is populated on Windows too. These exist only
+		//    machine-wide. A managed service is also a real SCM service, so the lower-cased-name dedup
+		//    keeps the sidecar entry (which knows it's managed). A failed enumeration must not hide
+		//    the managed ones.
+		if (installation == Installation.SYSTEM_WIDE) {
+			try {
+				for (final ScmService entry : scm.enumerate()) {
+					if (seen.add(entry.name().toLowerCase(Locale.ROOT))) {
+						final ServiceControlStatus st = entry.status();
+						services.add(new ServiceStatus(entry.name(), Installation.SYSTEM_WIDE, true,
+								false, false, false, st.state(), st.pid(), st.lastExitCode(), null));
+					}
 				}
+			} catch (final RuntimeException e) {
+				unreadable.add("<machine-wide service enumeration failed: " + e.getMessage() + ">");
 			}
-		} catch (final RuntimeException e) {
-			unreadable.add("<machine-wide service enumeration failed: " + e.getMessage() + ">");
 		}
 		return new Discovery(services, unreadable);
 	}
 
 	@Override
 	public ServiceSpec read(final String id, final Installation installation) {
-		final Map<String, Object> sidecar = sidecarOrNull(id);
+		final Map<String, Object> sidecar = sidecarOrNull(id, installation);
 		return sidecar == null ? null : reader.toSpec(sidecar, id);
 	}
 
 	@Override
 	public String readNative(final String id, final Installation installation) {
-		final Path file = sidecarFile(id);
-		if (!Files.isRegularFile(file)) {
+		final Path file = sidecarFile(id, installation);
+		if (file == null || !Files.isRegularFile(file)) {
 			return null;
 		}
 		try {
@@ -175,10 +201,8 @@ public final class WindowsBackend implements Backend {
 
 	@Override
 	public ServiceStatus status(final String id, final Installation installation) {
-		if (installation != Installation.SYSTEM_WIDE) {
-			return null;
-		}
-		final Map<String, Object> sidecar = sidecarOrNull(id);
+		final Map<String, Object> sidecar = sidecarOrNull(id, installation);
+		// A managed task (KIND_TASK): a per-user job (always a task) or a system-wide scheduled job.
 		if (sidecar != null && SidecarReader.KIND_TASK.equals(reader.kind(sidecar))) {
 			if (!taskScheduler.exists(id)) {
 				return null;   // orphaned sidecar; the task is gone
@@ -186,34 +210,43 @@ public final class WindowsBackend implements Backend {
 			final RunState state = taskScheduler.isRunning(id) ? RunState.RUNNING : RunState.STOPPED;
 			final boolean taskManaged = reader.isManaged(sidecar);
 			final TaskRunTimes runTimes = taskScheduler.runTimes(id);
-			return new ServiceStatus(id, Installation.SYSTEM_WIDE, true, reader.autoStart(sidecar),
+			return new ServiceStatus(id, installation, true, reader.autoStart(sidecar),
 					taskManaged, taskManaged && reader.isAdopted(sidecar), state, null, null, null)
 					.withRunTimes(runTimes.next(), runTimes.last());
 		}
-		final ServiceControlStatus live = scm.queryStatus(id);
-		if (live == null) {
-			return null;   // not installed as a service
+		// A service (managed daemon with a KIND_SERVICE sidecar, or a foreign service with no
+		// sidecar) — services exist only system-wide.
+		if (installation == Installation.SYSTEM_WIDE) {
+			final ServiceControlStatus live = scm.queryStatus(id);
+			if (live != null) {
+				final boolean managed = sidecar != null && reader.isManaged(sidecar);
+				final boolean adopted = managed && reader.isAdopted(sidecar);
+				final boolean enabled = managed && reader.autoStart(sidecar);
+				return new ServiceStatus(id, Installation.SYSTEM_WIDE, true, enabled, managed, adopted,
+						live.state(), live.pid(), live.lastExitCode(), null);
+			}
 		}
-		final boolean managed = sidecar != null && reader.isManaged(sidecar);
-		final boolean adopted = managed && reader.isAdopted(sidecar);
-		final boolean enabled = managed && reader.autoStart(sidecar);
-		return new ServiceStatus(id, Installation.SYSTEM_WIDE, true, enabled, managed, adopted,
-				live.state(), live.pid(), live.lastExitCode(), null);
+		return null;
 	}
 
 	// --- mutation ---
 
 	@Override
 	public void install(final ServiceSpec spec, final boolean overwriteUnmanaged) {
-		if (spec.runAs().installation() != Installation.SYSTEM_WIDE) {
-			throw new UnsupportedFeatureException("per-user installation", Platform.WINDOWS);
+		final Installation installation = spec.runAs().installation();
+		if (!sidecarDirs.containsKey(installation)) {
+			throw new UnsupportedFeatureException("installation " + installation, Platform.WINDOWS);
 		}
 		final String id = spec.id();
-		final boolean scheduled = spec.schedule() != null;
+		// A task on Windows = anything that is not a system-wide daemon: a per-user job (always a
+		// task, no admin) or a scheduled job. A system-wide daemon is a real SCM service (FFM host).
+		final boolean task = installation == Installation.PER_USER || spec.schedule() != null;
 
-		final Map<String, Object> existing = sidecarOrNull(id);
+		final Map<String, Object> existing = sidecarOrNull(id, installation);
 		final boolean managed = existing != null && reader.isManaged(existing);
-		final boolean existsLive = scm.exists(id) || taskScheduler.exists(id);
+		final boolean existsLive = installation == Installation.SYSTEM_WIDE
+				? (scm.exists(id) || taskScheduler.exists(id))
+				: taskScheduler.exists(id);
 		if ((existing != null || existsLive) && !managed && !overwriteUnmanaged) {
 			throw new UnmanagedServiceException(id);
 		}
@@ -225,11 +258,15 @@ public final class WindowsBackend implements Backend {
 		} else {
 			adopted = existing != null || existsLive;
 		}
-		writeSidecar(id, writer.render(spec, scheduled, adopted));
+		writeSidecar(id, writer.render(spec, task, adopted), installation);
 
-		if (scheduled) {
-			taskScheduler.create(id, taskXmlWriter.render(spec), accountOf(spec.runAs()),
-					passwordOf(spec));
+		if (task) {
+			// PER_USER → a current-user task (logon trigger for keep-running, time trigger for a
+			// scheduled job); SYSTEM_WIDE scheduled → a system task. accountOf is null for the
+			// current user (the XML InteractiveToken principal defines it) and for a system daemon.
+			final String xml = taskXmlWriter.render(spec,
+					installation == Installation.PER_USER ? currentUser : null);
+			taskScheduler.create(id, xml, accountOf(spec.runAs()), passwordOf(spec));
 		} else {
 			final ServiceStartType startType = startTypeOf(spec);
 			final String binPath = buildBinPath(javawExe, classpath, id);
@@ -259,10 +296,10 @@ public final class WindowsBackend implements Backend {
 	@Override
 	public void uninstall(final String id, final Installation installation,
 			final boolean unmanagedOk) {
-		final Map<String, Object> sidecar = sidecarOrNull(id);
-		final boolean isService = scm.exists(id);
-		final boolean isTask = taskScheduler.exists(id);
-		if (sidecar == null && !isService && !isTask) {
+		final Map<String, Object> sidecar = sidecarOrNull(id, installation);
+		final boolean isService = installation == Installation.SYSTEM_WIDE && scm.exists(id);
+		final boolean isTaskLive = taskScheduler.exists(id);
+		if (sidecar == null && !isService && !isTaskLive) {
 			throw new ServiceNotFoundException(id);
 		}
 		final boolean managed = sidecar != null && reader.isManaged(sidecar);
@@ -277,34 +314,34 @@ public final class WindowsBackend implements Backend {
 			waitUntilStopped(id);   // let the host exit so DeleteService really removes the service
 			ignoreFailure(() -> scm.delete(id));
 		}
-		deleteSidecar(id);
+		deleteSidecar(id, installation);
 	}
 
 	@Override
 	public void enable(final String id, final Installation installation) {
-		final Map<String, Object> sidecar = require(id);
+		final Map<String, Object> sidecar = require(id, installation);
 		if (isTask(id, sidecar)) {
 			taskScheduler.setEnabled(id, true);
 		} else {
 			scm.setStartType(id, ServiceStartType.AUTO);
 		}
-		updateAutoStart(id, sidecar, true);
+		updateAutoStart(id, sidecar, true, installation);
 	}
 
 	@Override
 	public void disable(final String id, final Installation installation) {
-		final Map<String, Object> sidecar = require(id);
+		final Map<String, Object> sidecar = require(id, installation);
 		if (isTask(id, sidecar)) {
 			taskScheduler.setEnabled(id, false);
 		} else {
 			scm.setStartType(id, ServiceStartType.DEMAND);   // won't auto-start, still startable
 		}
-		updateAutoStart(id, sidecar, false);
+		updateAutoStart(id, sidecar, false, installation);
 	}
 
 	@Override
 	public void start(final String id, final Installation installation) {
-		final Map<String, Object> sidecar = require(id);
+		final Map<String, Object> sidecar = require(id, installation);
 		if (isTask(id, sidecar)) {
 			taskScheduler.run(id);
 		} else {
@@ -314,7 +351,7 @@ public final class WindowsBackend implements Backend {
 
 	@Override
 	public void stop(final String id, final Installation installation) {
-		final Map<String, Object> sidecar = require(id);
+		final Map<String, Object> sidecar = require(id, installation);
 		if (isTask(id, sidecar)) {
 			taskScheduler.end(id);
 		} else {
@@ -324,7 +361,7 @@ public final class WindowsBackend implements Backend {
 
 	@Override
 	public void restart(final String id, final Installation installation) {
-		final Map<String, Object> sidecar = require(id);
+		final Map<String, Object> sidecar = require(id, installation);
 		if (isTask(id, sidecar)) {
 			taskScheduler.end(id);
 			taskScheduler.run(id);
@@ -382,8 +419,8 @@ public final class WindowsBackend implements Backend {
 				+ ServiceHost.class.getName() + " --id " + id;
 	}
 
-	private Map<String, Object> require(final String id) {
-		final Map<String, Object> sidecar = sidecarOrNull(id);
+	private Map<String, Object> require(final String id, final Installation installation) {
+		final Map<String, Object> sidecar = sidecarOrNull(id, installation);
 		if (sidecar == null && !scm.exists(id) && !taskScheduler.exists(id)) {
 			throw new ServiceNotFoundException(id);
 		}
@@ -399,14 +436,14 @@ public final class WindowsBackend implements Backend {
 	}
 
 	private void updateAutoStart(final String id, final Map<String, Object> sidecar,
-			final boolean autoStart) {
+			final boolean autoStart, final Installation installation) {
 		if (sidecar == null) {
 			return;   // unmanaged; nothing of ours to update
 		}
-		final boolean scheduled = SidecarReader.KIND_TASK.equals(reader.kind(sidecar));
+		final boolean task = SidecarReader.KIND_TASK.equals(reader.kind(sidecar));
 		final ServiceSpec updated = reader.toSpec(sidecar, id).toBuilder()
 				.autoStart(autoStart).build();
-		writeSidecar(id, writer.render(updated, scheduled));
+		writeSidecar(id, writer.render(updated, task), installation);
 	}
 
 	private ServiceStartType startTypeOf(final ServiceSpec spec) {
@@ -458,27 +495,33 @@ public final class WindowsBackend implements Backend {
 		return spec.description() != null ? spec.description() : spec.displayName();
 	}
 
-	private Path sidecarFile(final String id) {
-		return sidecarDir.resolve(id + ".json");
+	private Path sidecarFile(final String id, final Installation installation) {
+		final Path dir = sidecarDirs.get(installation);
+		return dir == null ? null : dir.resolve(id + ".json");
 	}
 
-	private Map<String, Object> sidecarOrNull(final String id) {
-		final Path file = sidecarFile(id);
-		return Files.isRegularFile(file) ? reader.parseFile(file) : null;
+	private Map<String, Object> sidecarOrNull(final String id, final Installation installation) {
+		final Path file = sidecarFile(id, installation);
+		return file != null && Files.isRegularFile(file) ? reader.parseFile(file) : null;
 	}
 
-	private void writeSidecar(final String id, final String json) {
+	private void writeSidecar(final String id, final String json, final Installation installation) {
+		final Path dir = sidecarDirs.get(installation);
 		try {
-			Files.createDirectories(sidecarDir);
-			Files.writeString(sidecarFile(id), json);
+			Files.createDirectories(dir);
+			Files.writeString(dir.resolve(id + ".json"), json);
 		} catch (final IOException e) {
 			throw new DefinitionIOException("failed to write sidecar for " + id, e);
 		}
 	}
 
-	private void deleteSidecar(final String id) {
+	private void deleteSidecar(final String id, final Installation installation) {
+		final Path file = sidecarFile(id, installation);
+		if (file == null) {
+			return;
+		}
 		try {
-			Files.deleteIfExists(sidecarFile(id));
+			Files.deleteIfExists(file);
 		} catch (final IOException e) {
 			throw new DefinitionIOException("failed to delete sidecar for " + id, e);
 		}

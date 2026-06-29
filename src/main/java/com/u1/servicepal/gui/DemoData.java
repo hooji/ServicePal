@@ -153,7 +153,7 @@ public final class DemoData {
 			case LINUX_OPENRC ->
 					new Capabilities(false, true, true, true, true, true, false, true, false);
 			case WINDOWS ->
-					new Capabilities(false, true, true, true, true, true, false, true, true);
+					new Capabilities(true, true, true, true, true, true, false, true, true);
 		};
 	}
 }

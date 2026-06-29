@@ -19,8 +19,22 @@ parking lot for decisions already discussed.
   extras (log rotation, advanced restart throttling). Would be opt-in via `WindowsOptions`
   (e.g. `.host(WindowsServiceHost.WINSW)`); accept that it bundles/locates a compiled `.exe`,
   which is why it is *not* the default.
-- Richer recovery-action mapping; per-user service templates (`Tmpl_<LUID>`); trigger-start
-  services.
+- Richer recovery-action mapping; SCM **user-service templates** (`SERVICE_USER_OWN_PROCESS`,
+  the `Tmpl_<LUID>` instances) as a *true* per-user **service** (vs. the Task Scheduler logon-task
+  approach now used for per-user — see below); trigger-start services.
+- **Friendly display names for foreign services in `list()`.** Machine-wide discovery
+  (`EnumServicesStatusExW`) is done, but foreign services surface by their service *key* name;
+  surfacing the friendly display name needs either a `displayName` on `ServiceStatus` (a model
+  change) or a per-service `QueryServiceConfig` lookup.
+
+## Deferred — GUI
+
+- **An "Advanced" disclosure** in the add/edit form for the fields the GUI deliberately hides
+  today: **environment variables** and **log-file (stdout/stderr) paths**, and possibly explicit
+  run-as identity. Kept out of the default UI to preserve the "dead simple, 90% case" surface;
+  a collapsible "Advanced" section would expose them without cluttering the common path.
+- **Richer schedule shapes** in the Repeat picker — monthly, every-N-hours, arbitrary cron —
+  beyond today's every-N-minutes / daily / weekly.
 
 ## Deferred — broader JDK reach
 

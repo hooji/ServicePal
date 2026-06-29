@@ -96,9 +96,15 @@ macOS-backend shape.
   create/delete/start/stop(ControlService)/setStartType/setDescription/queryStatusEx, GetLastError
   capture). Per-service **sidecar JSON** in `%ProgramData%\ServicePal\<id>.json` is the spec record
   (host reads it), the managed marker, and the service-vs-task router; hand-rolled `Json` codec (no
-  new dep — the Windows analog of dd-plist, confined). **SYSTEM_WIDE-only** in v1
-  (`perUserInstall` false → fail fast); `calendar`/`interval` true (Task Scheduler);
-  `structuredStatus` true (`QueryServiceStatusEx`). **Discovery is machine-wide**: managed
+  new dep — the Windows analog of dd-plist, confined). **Per-user now supported** (`perUserInstall`
+  true): a per-user job is a **current-user Task Scheduler task** (no admin) — keep-running → a
+  `<LogonTrigger>`, scheduled → its time trigger, both running as the current user (`InteractiveToken`,
+  `LeastPrivilege`); its sidecar lives in `%LOCALAPPDATA%\ServicePal` (`WindowsBackend` now takes a
+  `Map<Installation,Path> sidecarDirs` + the current user, like systemd's dir map). A system-wide
+  daemon is still a real SCM service (the FFM host). Keep-alive for a per-user task is best-effort
+  (Task Scheduler `RestartOnFailure`, so `ALWAYS`≈`ON_FAILURE`). The GUI's auto-privilege model now
+  picks per-user on Windows → **no admin for the common case**. `calendar`/`interval` true (Task
+  Scheduler); `structuredStatus` true (`QueryServiceStatusEx`). **Discovery is machine-wide**: managed
   services/tasks (from their sidecars) **plus** every other Win32 service via `EnumServicesStatusExW`
   (`FfmScm.enumerate` → `Scm.enumerate` returning `ScmService(name, status)`), surfaced as foreign and
   deduped against the sidecars by case-insensitive name — so the GUI's "Other background jobs" section
@@ -108,17 +114,18 @@ macOS-backend shape.
   `TaskScheduler` (stubs in tests). **FFM compiles everywhere; only `createDefault()`/calls run on Windows** — so the rest
   unit-tests off-Windows. Validated on the `windows-latest` runner via the probe `SelfTestCli`
   (real install→start→`RUNNING`+pid→uninstall; the host log confirmed the SCM round-trip).
-- **214 unit tests**, all platform-independent (stubbed `CommandRunner`/`Launchctl`/`Systemctl`/
+- **224 unit tests**, all platform-independent (stubbed `CommandRunner`/`Launchctl`/`Systemctl`/
   `RcService`/`Scm`/`TaskScheduler`, temp-dir definitions; FFM struct parses tested via hand-built
   buffers). GitHub Actions CI on
   ubuntu/macos/windows (JDK 25); the probe runs a real `systemctl` lifecycle (sudo) on the ubuntu
   runner, a real launchd lifecycle on macOS, a real `rc-service` lifecycle in an Alpine/OpenRC
   container, and a real Windows-service lifecycle (the FFM host) on the windows runner.
-- **Not yet (refinements, not platforms):** per-user Windows services (Windows is SYSTEM_WIDE-only in
-  v1); friendly display names for foreign Windows services in `list()` (today they show the service
-  key name, since `ServiceStatus` carries no display name); the lower-JDK Mac/Linux-only build.
-  (Scheduling now works on all four platforms **and is surfaced in the GUI**; next-run/last-run are in
-  `ServiceStatus`; **Windows discovery is now machine-wide** via `EnumServicesStatusExW`.)
+- **Not yet (refinements, not platforms):** friendly display names for foreign Windows services in
+  `list()` (today they show the service key name, since `ServiceStatus` carries no display name); a
+  *true* per-user Windows **service** (SCM user-service templates) vs. today's per-user **task**; the
+  lower-JDK Mac/Linux-only build. (Scheduling now works on all four platforms **and is surfaced in the
+  GUI**; next-run/last-run are in `ServiceStatus`; **Windows discovery is machine-wide** via
+  `EnumServicesStatusExW`; **per-user Windows** works as a current-user Task Scheduler task.)
   `UnimplementedBackend` is now unused (all four
   platforms have real backends) but kept as a clear "not implemented" signal.
 - **Refinements made during impl:**

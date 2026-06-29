@@ -1,9 +1,12 @@
 package com.u1.servicepal.cli;
 
+import com.u1.servicepal.Installation;
 import com.u1.servicepal.Platform;
 import com.u1.servicepal.ServiceException;
 import com.u1.servicepal.ServiceManager;
 import com.u1.servicepal.model.CalendarSchedule;
+import com.u1.servicepal.model.RestartPolicy;
+import com.u1.servicepal.model.RunAs;
 import com.u1.servicepal.model.RunState;
 import com.u1.servicepal.model.Schedule;
 import com.u1.servicepal.model.ServiceSpec;
@@ -134,6 +137,14 @@ public final class SelfTestCli {
 			failures += scheduledSelfTest(mgr);
 		}
 
+		// Windows: exercise a real per-user job — a current-user Task Scheduler task (no admin). This
+		// is the no-admin path the GUI uses by default on Windows; create/read/status/uninstall all
+		// work without an interactive session (only actually *running* an InteractiveToken task would
+		// need one, so we don't gate on RUNNING here).
+		if (platform == Platform.WINDOWS) {
+			failures += perUserSelfTest(mgr);
+		}
+
 		System.out.println(failures == 0 ? "SELFTEST PASS"
 				: "SELFTEST FAIL (" + failures + " failing checks)");
 		if (failures > 0) {
@@ -185,6 +196,55 @@ public final class SelfTestCli {
 				}
 			} catch (final Throwable t) {
 				System.out.println("scheduled cleanup warning: " + t);
+			}
+		}
+		return failures;
+	}
+
+	/**
+	 * Install → inspect → uninstall a throwaway <em>per-user</em> job: a current-user Task Scheduler
+	 * task (no admin). Validates the create/read/status/uninstall path on the real {@code schtasks}.
+	 * We do not start it (an InteractiveToken task needs an interactive session, which a CI runner may
+	 * lack), so RUNNING is not gated here.
+	 */
+	private static int perUserSelfTest(final ServiceManager mgr) {
+		final String pid = ID + ".peruser";
+		int failures = 0;
+		try {
+			if (mgr.isInstalled(pid)) {
+				mgr.uninstall(pid, true);
+			}
+			final ServiceSpec spec = ServiceSpec.builder()
+					.id(pid)
+					.command("ping", "-n", "120", "127.0.0.1")
+					.asCurrentUser()
+					.autoStart(true)
+					.restart(RestartPolicy.ON_FAILURE)
+					.build();
+			mgr.install(spec);   // creates a current-user task; no start-now (logon trigger)
+			final ServiceStatus st = mgr.status(pid);
+			System.out.println("per-user: installed=" + st.installed() + " managed=" + st.managed()
+					+ " installation=" + st.installation());
+			failures += check("per-user: installed", st.installed());
+			failures += check("per-user: managed by us", st.managed());
+			failures += check("per-user: resolves as PER_USER",
+					st.installation() == Installation.PER_USER);
+			final ServiceSpec back = mgr.read(pid);
+			failures += check("per-user: read round-trips command",
+					back != null && back.command().equals(spec.command()));
+			failures += check("per-user: read round-trips run-as",
+					back != null && back.runAs().kind() == RunAs.Kind.CURRENT_USER);
+		} catch (final Throwable t) {
+			System.out.println("PER-USER SELFTEST ERROR: " + t);
+			t.printStackTrace(System.out);
+			failures++;
+		} finally {
+			try {
+				if (mgr.isInstalled(pid)) {
+					mgr.uninstall(pid, true);
+				}
+			} catch (final Throwable t) {
+				System.out.println("per-user cleanup warning: " + t);
 			}
 		}
 		return failures;
