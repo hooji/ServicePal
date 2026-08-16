@@ -412,6 +412,10 @@ No UI — API only. The library:
 - Release plumbing: `release.yml` (tag-driven build of fat jar + sources jar) and
   `version-bump.yml` (PR-merge → next version from latest `v*` tag; `release:minor`/`major`
   labels or `release:skip` / `[skip release]` to control). See `README.md`.
+- Releases also publish the fat jar + sources jar to this repo's **GitHub Packages Maven
+  registry** (`com.u1.servicepal:servicepal`), then **prune the registry to the newest version
+  only** — the GitHub Release page is the permanent archive of every version, so never depend
+  on an older registry version.
 
 ## Repo facts
 
