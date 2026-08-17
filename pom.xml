@@ -27,7 +27,7 @@
 			(the enable-native-access=ALL-UNNAMED flag) on Windows (JEP 472 integrity-by-default).
 		-->
 		<maven.compiler.release>25</maven.compiler.release>
-		<junit.version>5.10.2</junit.version>
+		<junit.version>6.1.3</junit.version>
 	</properties>
 
 	<!-- Where `mvn deploy` publishes: this repository's own Maven registry
@@ -47,7 +47,7 @@
 		<dependency>
 			<groupId>com.googlecode.plist</groupId>
 			<artifactId>dd-plist</artifactId>
-			<version>1.28</version>
+			<version>1.30</version>
 		</dependency>
 
 		<!--
@@ -58,7 +58,7 @@
 		<dependency>
 			<groupId>com.formdev</groupId>
 			<artifactId>flatlaf</artifactId>
-			<version>3.7.1</version>
+			<version>3.7.2</version>
 		</dependency>
 
 		<dependency>
